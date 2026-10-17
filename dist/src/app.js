@@ -7,15 +7,15 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer;
-  let past=[],future=[],placement=null;
+  let past=[],future=[],placement=null,busEdit=null,expanded=null;
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:names[n.type]);
   const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions});
   function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
-  function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...snapshot(),camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
+  function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...snapshot(),camera:expanded?expanded.camera:camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
   function commit(before){state.definitions=C.pruneDefinitions(state);if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}render();save();}
-  function change(fn){const before=snapshot();fn();commit(before);}
+  function change(fn){if(expanded){toast('全部收回后即可继续编辑电路');return;}const before=snapshot();fn();commit(before);}
   function restore(s){state=C.clone(s);selected=null;render();save();}
   function undo(){if(!past.length)return;future.push(snapshot());restore(past.pop());}
   function redo(){if(!future.length)return;past.push(snapshot());restore(future.pop());}
@@ -26,8 +26,9 @@
     $('grid').setAttribute('patternTransform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('zoom-label').textContent=Math.round(camera.scale*100)+'%';
   }
-  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
+  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
   function fit(initialView=false){
+    if(expanded){const view=expanded.view,scale=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-180)/view.h));camera={x:(svg.clientWidth-view.w*scale)/2,y:100+(svg.clientHeight-180-view.h*scale)/2,scale};setCamera();save();return;}
     if(!state.nodes.length){camera={x:svg.clientWidth/2,y:svg.clientHeight/2,scale:1};setCamera();return;}
     const boxes=state.nodes.map(n=>({...n,...C.size(n,state.definitions)})),ps=state.wires.flatMap(w=>C.points(w,state));
     const minX=Math.min(...boxes.map(b=>b.x),...ps.map(p=>p.x)),maxX=Math.max(...boxes.map(b=>b.x+b.w),...ps.map(p=>p.x));
@@ -35,10 +36,10 @@
     const scale=initialView?Math.min(1,svg.clientWidth/320):Math.max(.2,Math.min(1.25,(svg.clientWidth-90)/(maxX-minX||1),(svg.clientHeight-190)/(maxY-minY||1)));
     camera={x:svg.clientWidth*(initialView&&svg.clientWidth>500?.68:.5)-(minX+maxX)/2*scale,y:svg.clientHeight*(initialView?.34:.49)-(minY+maxY)/2*scale,scale};setCamera();if(selected)renderInspector();save();
   }
-  function signalClass(bits){return bits?.includes(null)?'unknown':bits?.some(x=>x===1)?'high':'low';}
-  function signalText(bits){return !bits?'?':bits.length===1?(bits[0]??'?'):bits.slice().reverse().map(x=>x??'?').join('');}
+  function signalClass(bits){return bits?.some(x=>x===1)?'high':'low';}
+  function signalText(bits){return !bits?'0':bits.length===1?String(bits[0]||0):bits.slice().reverse().map(x=>x||0).join('');}
   const binary=n=>(n.value||0).toString(2).padStart(n.bits||1,'0');
-  const decimal=bits=>!bits||bits.includes(null)?'?':bits.reduce((value,bit,i)=>value+bit*2**i,0);
+  const decimal=bits=>!bits?0:bits.reduce((value,bit,i)=>value+(bit||0)*2**i,0);
   const path=ps=>ps.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
   function renderWires(){
     $('wire-layer').innerHTML=state.wires.map(w=>{const ps=C.points(w,state),bits=sim.wires[w.id],isBus=bits.length>1,mid=ps[Math.floor(ps.length/2)];return `<g class="wire ${selected?.id===w.id?'selected':''}" data-wire="${w.id}"><path class="wire-hit" d="${path(ps)}"/><path class="wire-line ${signalClass(bits)} ${isBus?'bus':''}" d="${path(ps)}"/>${isBus?`<text class="bus-label" x="${mid.x+8}" y="${mid.y-9}">${bits.length}b · ${signalText(bits)}</text>`:''}${[w.a,w.b].filter(e=>!e.node).map(e=>`<circle class="junction" cx="${e.x}" cy="${e.y}" r="3.3"/>`).join('')}</g>`;}).join('');
@@ -48,15 +49,16 @@
       let symbol='';
       if(n.type==='nand')symbol='<text class="node-glyph" x="76" y="66" text-anchor="middle">⊼</text>';
       else if(n.type==='input')symbol=(n.bits||1)>1?`<foreignObject x="33" y="33" width="86" height="32"><input xmlns="http://www.w3.org/1999/xhtml" class="binary-input" data-binary="${n.id}" type="text" inputmode="numeric" pattern="[01]{1,${n.bits}}" maxlength="${n.bits}" value="${binary(n)}" aria-label="${escape(t)} ${n.bits}位二进制输入" title="输入 ${n.bits} 位 0/1，按 Enter 确认" autocomplete="off" spellcheck="false"/></foreignObject>`:`<g class="toggle ${signalClass(value)}" data-toggle="${n.id}" role="button" tabindex="0" aria-label="切换${escape(t)}" aria-pressed="${!!n.value}"><rect x="51" y="32" width="50" height="32" rx="6"/><text x="76" y="54" text-anchor="middle">${signalText(value)}</text></g>`;
-      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':signalClass(value)==='unknown'?'#b7a17a':'#7793a8';symbol=value.length>1?`<g class="numeric-display"><rect x="39" y="32" width="74" height="34" rx="4" fill="#0d1c24" stroke="#496675"/><text x="76" y="55" text-anchor="middle" fill="${color}" font-family="monospace" font-size="21">${decimal(value)}</text><text x="76" y="${z.h+27}" text-anchor="middle" fill="#7494a5" font-size="7">DEC · ${value.length} BIT</text></g>`:`<g class="single-indicator"><circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="13">${signalText(value)}</text></g>`;}
+      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':'#7793a8';symbol=value.length>1?`<g class="numeric-display"><rect x="39" y="32" width="74" height="34" rx="4" fill="#0d1c24" stroke="#496675"/><text x="76" y="55" text-anchor="middle" fill="${color}" font-family="monospace" font-size="21">${decimal(value)}</text><text x="76" y="${z.h+27}" text-anchor="middle" fill="#7494a5" font-size="7">DEC · ${value.length} BIT</text></g>`:`<g class="single-indicator"><circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="13">${signalText(value)}</text></g>`;}
       else if(n.type==='custom')symbol=`<text x="76" y="${z.h/2+10}" text-anchor="middle" fill="#bca6dd" font-size="23">◇</text>`;
       else symbol=`<path d="M 65 38 L ${n.type==='hub'?87:65} ${z.h/2} L ${n.type==='hub'?65:87} ${z.h-20}" fill="none" stroke="#7dabc4" stroke-width="2"/>`;
-      return `<g class="node ${selected?.id===n.id?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':signalClass(bits)==='unknown'?'#b7a17a':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="76" y="${z.h+15}" text-anchor="middle">${escape(n.type==='custom'?'CUSTOM GATE':subtitles[n.type])}</text></g>`;
+      return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="76" y="${z.h+15}" text-anchor="middle">${escape(n.type==='custom'?'CUSTOM GATE':subtitles[n.type])}</text></g>`;
     }).join('');
   }
   function renderInspector(){
     const n=selected?.type==='node'?state.nodes.find(n=>n.id===selected.id):null;
     document.querySelector('.inspector').classList.toggle('has-selection',!!selected);
+    if(selected?.type==='nodes'){const count=selected.ids.length;$('selection-panel').innerHTML=`<div class="selection-eyebrow">多选元件</div><div class="selected-name">已选中 ${count} 个元件</div><p class="selection-description">Backspace / Delete 一次删除所选元件和关联导线。<br>Esc 取消选择，Ctrl+Z 撤销删除。</p>`;$('selection-status').textContent='已选中 '+count+' 个元件';return;}
     if(!n){$('selection-panel').innerHTML=selected?'<div class="selection-eyebrow">已选中导线</div><div class="selected-name">电路连接</div><p class="selection-description">按 Delete 删除，或继续从导线分出一条支路。</p>':'<div class="selection-eyebrow">元件属性</div><div class="selected-name">等待你的选择 <span class="micro">↖</span></div><p class="selection-description">点击画布上的元件，<br>查看信号与调整参数。</p>';$('selection-status').textContent=selected?'已选中导线':'选中元件以查看属性';return;}
     $('selection-status').textContent=title(n)+' · X '+Math.round(n.x)+' / Y '+Math.round(n.y);
     const canBits=['input','output','hub','splitter'].includes(n.type),bits=n.bits||1;
@@ -64,7 +66,7 @@
     if(n.type==='input'&&bits>1){const field=$('prop-value');field.type='text';field.inputMode='numeric';field.maxLength=bits;field.pattern='[01]{1,'+bits+'}';field.value=binary(n);field.setAttribute('aria-label',bits+'位二进制输入');field.title='只输入 0 和 1，按 Enter 确认';field.closest('.property-row').firstChild.textContent='二进制值 ';}
     if(n.type==='output'&&bits>1){const row=document.createElement('div');row.className='property-row';row.innerHTML='<span>十进制值</span><code class="decimal-value">'+decimal(sim.outputs[n.id])+'</code>';$('selection-panel').append(row);}
     $('prop-name').onchange=e=>change(()=>n.label=e.target.value.trim());
-    if($('prop-bits'))$('prop-bits').onchange=e=>{const b=Number(e.target.value);change(()=>{n.bits=b;n.value=(n.value||0)%(2**b);state.wires=state.wires.filter(w=>[w.a,w.b].every(e=>e.node!==n.id||C.ports(n,state.definitions).some(p=>p.dir===e.dir&&p.port===e.port)));});toast('位宽已更新；请检查相连导线的位宽。');};
+    if($('prop-bits'))$('prop-bits').onchange=e=>{const b=Number(e.target.value);change(()=>resizeBits(n,b));toast('位宽已更新；请检查相连导线的位宽。');};
     if($('prop-toggle'))$('prop-toggle').onclick=()=>toggle(n.id);
     if($('prop-value')){$('prop-value').onchange=e=>commitBinary(n,e.target);$('prop-value').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();e.target.blur();}};}
     if(window.innerWidth<=980){
@@ -77,20 +79,22 @@
     const ids=Object.keys(state.definitions).filter(id=>!state.definitions[id].hidden);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
     $('custom-library').innerHTML=ids.map(id=>{const d=state.definitions[id];return `<div class="custom-entry"><button class="component" data-custom="${id}" title="拖出 ${escape(d.name)}；右键从元件库删除"><span class="component-symbol" style="color:#bca6dd">◇</span><span><b>${escape(d.name)}</b><small>${d.inputs.length} 输入 / ${d.outputs.length} 输出</small></span></button><button class="delete-custom" data-delete-custom="${id}" title="删除 ${escape(d.name)}" aria-label="删除保存的逻辑门 ${escape(d.name)}"><span aria-hidden="true">×</span><span class="mobile-delete-label">删除</span></button></div>`;}).join('');
   }
-  function deleteSavedGate(id){if(placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
+  function deleteSavedGate(id){if(expanded||placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
   $('custom-library').addEventListener('click',e=>{const b=e.target.closest('[data-delete-custom]');if(b){e.stopPropagation();deleteSavedGate(b.dataset.deleteCustom);}});
   $('custom-library').addEventListener('contextmenu',e=>{const b=e.target.closest('[data-custom],[data-delete-custom]');if(b){e.preventDefault();deleteSavedGate(b.dataset.custom||b.dataset.deleteCustom);}});
   function render(){
-    sim=C.simulate(state);renderWires();renderNodes();renderInspector();renderLibrary();setCamera();
-    $('undo').disabled=!past.length;$('redo').disabled=!future.length;$('delete').disabled=!selected;
-    $('onboarding').hidden=!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
-    $('node-count').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
-    const unknown=Object.values(sim.portValues).some(v=>v.includes(null));
-    $('sim-status').textContent=sim.issues.length?'检查连接':!state.wires.length?'等待连接':unknown?'含未知信号':'信号已稳定';
-    $('sim-dot').style.background=sim.issues.length||unknown?'#e5b978':'#91e6be';
-    $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'接通输入，看看信号如何流动。':unknown?'? 表示未接通或无法确定的信号。':'电路正在实时响应输入变化。');
+    sim=C.simulate(state);if(expanded){$('wire-layer').innerHTML='';$('node-layer').innerHTML=expanded.view.svg;$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');$('selection-panel').innerHTML='<div class="selection-eyebrow">已全部展开</div><div class="selected-name">查看内部电路</div><p class="selection-description">所有自定义实例已递归展开。<br>平移、缩放可查看细节。<br>点击“全部收回”恢复编辑。</p>';$('selection-status').textContent='只读展开 · '+expanded.view.leaves.length+' 个原始元件';}else{renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
+    $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;
+    for(const id of ['package','import','new','wire-mode'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded);
+    $('expand').disabled=!expanded&&!state.nodes.some(n=>n.type==='custom');$('expand').textContent=expanded?'全部收回':'全部展开';$('expand').setAttribute('aria-pressed',String(!!expanded));
+    $('onboarding').hidden=!!expanded||!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
+    $('node-count').textContent=expanded?expanded.view.leaves.length+' 个原始元件 · 只读':state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
+    $('sim-status').textContent=sim.issues.length?'检查连接':'信号已稳定';
+    $('sim-dot').style.background=sim.issues.length?'#e5b978':'#91e6be';
+    $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'未接线输入默认为 0（低电平）。':'电路正在实时响应输入变化。');
   }
-  function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=4;if(type==='custom')n.def=def;return n;}
+  function toggleExpanded(){if(gesture||placement||document.querySelector('dialog[open]'))return;if(expanded){const previous=expanded;expanded=null;camera={...previous.camera};setMode(previous.mode);selected=null;render();save();return;}if(!state.nodes.some(n=>n.type==='custom')){toast('先在画布上放置一个自定义门');return;}try{const view=window.LogicExpanded.build(snapshot());expanded={view,camera:{...camera},mode};selected=null;setMode('pan');render();fit();}catch(error){toast(error.message);}}
+  function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
   function previewPlacement(e){
     if(!placement)return;const g=placement,n=g.node,z=C.size(n,state.definitions),r=svg.getBoundingClientRect(),hit=document.elementFromPoint(e.clientX,e.clientY),inside=e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom&&(hit===svg||svg.contains(hit)),scale=inside?camera.scale:1;
     g.inside=inside;g.point={clientX:e.clientX,clientY:e.clientY};g.moved=g.moved||Math.hypot(e.clientX-g.start.x,e.clientY-g.start.y)>5;
@@ -100,11 +104,11 @@
   function endPlacement(e,cancel=false){
     if(!placement)return;const g=placement;if(e&&e.pointerId!==undefined&&e.pointerId!==g.pointerId)return;if(e&&!cancel)previewPlacement(e);placement=null;placementPreview.hidden=true;document.body.classList.remove('placing-component');g.source.classList.remove('being-dragged');if(g.source.hasPointerCapture(g.pointerId))g.source.releasePointerCapture(g.pointerId);
     if(cancel||!g.moved||!g.inside)return;
-    const p=worldPoint(g.point),z=C.size(g.node,state.definitions);g.node.x=Math.round((p.x-z.w/2)/12)*12;g.node.y=Math.round((p.y-z.h/2)/12)*12;
+    const p=worldPoint(g.point);if(['hub','splitter'].includes(g.node.type)){openBusDialog(g.node,p);return;}const z=C.size(g.node,state.definitions);g.node.x=Math.round((p.x-z.w/2)/12)*12;g.node.y=Math.round((p.y-z.h/2)/12)*12;
     change(()=>{state.nodes.push(g.node);selected={type:'node',id:g.node.id};});
   }
   document.querySelector('.library').addEventListener('pointerdown',e=>{
-    const source=e.target.closest('[data-add],[data-custom]');if(!source||e.button!==0||gesture||placement)return;if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
+    const source=e.target.closest('[data-add],[data-custom]');if(!source||e.button!==0||gesture||placement||expanded)return;if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
     placement={node:placementNode(source.dataset.add||'custom',source.dataset.custom),source,pointerId:e.pointerId,start:{x:e.clientX,y:e.clientY},moved:false};source.setPointerCapture(e.pointerId);source.classList.add('being-dragged');document.body.classList.add('placing-component');placementPreview.hidden=false;previewPlacement(e);e.preventDefault();
   });
   document.addEventListener('pointermove',e=>{if(placement&&e.pointerId===placement.pointerId){previewPlacement(e);e.preventDefault();}},{passive:false});
@@ -112,7 +116,13 @@
   document.addEventListener('lostpointercapture',e=>{if(placement&&e.pointerId===placement.pointerId)endPlacement(e,true);});
   function toggle(id){const n=state.nodes.find(n=>n.id===id);if(!n)return;change(()=>{n.value=((n.value||0)+1)%(2**(n.bits||1));selected={type:'node',id};});}
   function commitBinary(n,field){const value=field.value.trim(),bits=n.bits||1;if(!/^[01]+$/.test(value)||value.length>bits){toast('请输入 1–'+bits+' 位二进制，只能包含 0 和 1');field.value=binary(n);return;}change(()=>{n.value=parseInt(value,2);selected={type:'node',id:n.id};});}
-  function remove(target=selected){if(!target)return;change(()=>{if(target.type==='node'){state.nodes=state.nodes.filter(n=>n.id!==target.id);state.wires=state.wires.filter(w=>w.a.node!==target.id&&w.b.node!==target.id);}else state.wires=state.wires.filter(w=>w.id!==target.id);selected=null;});}
+  function resizeBits(n,bits){n.bits=bits;n.value=(n.value||0)%(2**bits);state.wires=state.wires.filter(w=>[w.a,w.b].every(e=>e.node!==n.id||C.ports(n,state.definitions).some(p=>p.dir===e.dir&&p.port===e.port)));}
+  function updateBusSummary(){if(!busEdit)return;const value=$('bus-count').value.trim(),count=/^[0-9]+$/.test(value)?Number(value):0,hub=busEdit.node.type==='hub';$('bus-summary').textContent=count>=2&&count<=8?(hub?count+' 根单比特线 → 1 条 '+count+' 位总线':'1 条 '+count+' 位总线 → '+count+' 根单比特线'):(hub?'输入要合成一条总线的单比特线数量。':'输入要从一条总线拆出的单比特线数量。');}
+  function openBusDialog(node,center=null){busEdit={node,center};$('bus-heading').textContent='设置'+names[node.type]+'线数';$('bus-count').value=center?'':String(node.bits);$('bus-error').textContent='';$('bus-confirm').textContent=center?'放置元件':'应用';updateBusSummary();$('bus-dialog').showModal();$('bus-count').focus();if(!center)$('bus-count').select();}
+  $('bus-count').oninput=()=>{updateBusSummary();$('bus-error').textContent='';};
+  $('bus-dialog').addEventListener('close',()=>{if(!$('bus-dialog').open)busEdit=null;});
+  $('bus-form').onsubmit=e=>{e.preventDefault();if(!busEdit)return;const value=$('bus-count').value.trim(),count=Number(value);if(!/^[0-9]+$/.test(value)||!Number.isInteger(count)||count<2||count>8){$('bus-error').textContent='线数请输入 2–8 之间的整数';return;}const {node,center}=busEdit;if(center){node.bits=count;const z=C.size(node,state.definitions);node.x=Math.round((center.x-z.w/2)/12)*12;node.y=Math.round((center.y-z.h/2)/12)*12;change(()=>{state.nodes.push(node);selected={type:'node',id:node.id};});}else{const current=state.nodes.find(n=>n.id===node.id);if(!current){$('bus-dialog').close();return;}change(()=>{resizeBits(current,count);selected={type:'node',id:current.id};});}busEdit=null;$('bus-dialog').close();};
+  function remove(target=selected){if(!target)return;change(()=>{if(target.type==='node'||target.type==='nodes'){const ids=new Set(target.type==='nodes'?target.ids:[target.id]);state.nodes=state.nodes.filter(n=>!ids.has(n.id));state.wires=state.wires.filter(w=>!ids.has(w.a.node)&&!ids.has(w.b.node));}else state.wires=state.wires.filter(w=>w.id!==target.id);selected=null;});}
   function endpoint(p){return p.node?{node:p.node,dir:p.dir,port:p.port}:{x:p.x,y:p.y};}
   function snap(p){
     const threshold=14/camera.scale;let closest=null,dist=threshold;
@@ -139,14 +149,14 @@
     const p=worldPoint(e);$('coords').textContent='X '+Math.round(p.x)+' · Y '+Math.round(p.y);if(!gesture)return;
     if(gesture.type==='right-delete'){gesture.moved=gesture.moved||C.distance(localPoint(e),gesture.start)>6;}
     else if(gesture.type==='pan'){const q=localPoint(e);camera.x=gesture.camera.x+q.x-gesture.start.x;camera.y=gesture.camera.y+q.y-gesture.start.y;setCamera();}
-    else if(gesture.type==='node'){const n=state.nodes.find(n=>n.id===gesture.id);if(!n)return;n.x=Math.round((gesture.x+p.x-gesture.start.x)/12)*12;n.y=Math.round((gesture.y+p.y-gesture.start.y)/12)*12;gesture.moved=true;sim=C.simulate(state);renderWires();renderNodes();}
+    else if(gesture.type==='node'){const n=state.nodes.find(n=>n.id===gesture.id);if(!n)return;gesture.moved=gesture.moved||C.distance(p,gesture.start)*camera.scale>5;if(!gesture.moved)return;n.x=Math.round((gesture.x+p.x-gesture.start.x)/12)*12;n.y=Math.round((gesture.y+p.y-gesture.start.y)/12)*12;sim=C.simulate(state);renderWires();renderNodes();}
     else {const s=snap(p);gesture.current=s.point;gesture.b=s.anchor;gesture.moved=C.distance(gesture.start,p)*camera.scale>6;const a=gesture.start,b=s.point,x=(a.x+b.x)/2;$('draft-layer').innerHTML=`<path class="draft" d="M${a.x},${a.y} H${x} V${b.y} H${b.x}"/>${s.snapped?`<circle class="snap-ring" cx="${b.x}" cy="${b.y}" r="10"/>`:''}`;}
   });
   function finish(e,cancel=false){
     if(!gesture)return;const g=gesture;gesture=null;svg.classList.remove('dragging');$('draft-layer').innerHTML='';if(svg.hasPointerCapture(e.pointerId))svg.releasePointerCapture(e.pointerId);
     if(g.type==='right-delete'){if(cancel||g.moved||C.distance(localPoint(e),g.start)>6)return;const hit=document.elementFromPoint(e.clientX,e.clientY),target=hit?.closest(g.target.type==='node'?'[data-node]':'[data-wire]');if(target&&(g.target.type==='node'?target.dataset.node:target.dataset.wire)===g.target.id)remove(g.target);return;}
     if(g.type==='pan'){save();return;}
-    if(g.type==='node'){if(cancel)state=g.before;else commit(g.before);render();return;}
+    if(g.type==='node'){if(cancel)state=g.before;else commit(g.before);render();const n=state.nodes.find(n=>n.id===g.id);if(!cancel&&!g.moved&&n&&['hub','splitter'].includes(n.type))openBusDialog(n);return;}
     if(cancel)return;
     if(g.moved){if(state.wires.length>=1500)return toast('当前画布已达 1500 根导线');const b=g.b||snap(worldPoint(e)).anchor;if(JSON.stringify(g.a)===JSON.stringify(b))return;change(()=>{const w={id:uid('w'),a:g.a,b};state.wires.push(w);selected={type:'wire',id:w.id};});if(sim.issues.length)toast(sim.issues[0]);}
     else {selected=g.wire?{type:'wire',id:g.wire}:null;renderInspector();$('delete').disabled=!selected;}
@@ -159,7 +169,9 @@
   svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e));},{passive:false});
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
-    if(e.target.matches('input,select,textarea')||document.querySelector('dialog[open]')||placement)return;
+    if(e.target.matches('input,select,textarea')||e.target.isContentEditable||document.querySelector('dialog[open]')||placement)return;
+    if(expanded){if(e.key==='Escape'){e.preventDefault();toggleExpanded();}else if(['Backspace','Delete'].includes(e.key)||e.ctrlKey||e.metaKey)e.preventDefault();return;}
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'){e.preventDefault();if(gesture)return;selected=state.nodes.length?{type:'nodes',ids:state.nodes.map(n=>n.id)}:null;window.getSelection()?.removeAllRanges();render();return;}
     if(e.code==='Space'){e.preventDefault();space=true;setMode(mode);}
     if(e.key==='Escape'){if(gesture){if(gesture.type==='node')state=gesture.before;gesture=null;$('draft-layer').innerHTML='';}selected=null;render();}
     if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();remove();}
@@ -171,11 +183,12 @@
   window.addEventListener('blur',()=>{endPlacement(null,true);if(gesture?.type==='right-delete'){const id=gesture.pointerId;gesture=null;if(svg.hasPointerCapture(id))svg.releasePointerCapture(id);}space=false;setMode(mode);});
   $('wire-mode').onclick=()=>setMode('wire');$('pan-mode').onclick=()=>setMode('pan');$('undo').onclick=undo;$('redo').onclick=redo;$('delete').onclick=()=>remove();
   $('zoom-in').onclick=()=>zoom(1.2);$('zoom-out').onclick=()=>zoom(1/1.2);$('fit').onclick=()=>fit();
+  $('expand').onclick=toggleExpanded;
   $('help').onclick=()=>$('help-dialog').showModal();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
   $('package').onclick=()=>{try{const d=C.makeDefinition(state,'新逻辑门');$('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';$('package-error').textContent='';$('package-dialog').showModal();$('gate-name').focus();}catch(e){toast(e.message);}};
   $('package-form').onsubmit=e=>{e.preventDefault();try{if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');const d=C.makeDefinition(state,$('gate-name').value);change(()=>state.definitions[uid('g')]=d);$('package-dialog').close();$('gate-name').value='';toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');}catch(e){$('package-error').textContent=e.message;}};
   $('new').onclick=()=>$('new-dialog').showModal();$('confirm-new').onclick=()=>{change(()=>{state={...initial(),definitions:state.definitions};selected=null;});fit(true);$('new-dialog').close();};
-  $('export').onclick=()=>{const blob=new Blob([JSON.stringify({...snapshot(),camera},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='逻辑工坊-电路.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('电路与自定义门已导出');};
+  $('export').onclick=()=>{const blob=new Blob([JSON.stringify({...snapshot(),camera:expanded?expanded.camera:camera},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='逻辑工坊-电路.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('电路与自定义门已导出');};
   $('import').onclick=()=>$('file-input').click();
   $('file-input').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>2*1024*1024)throw Error('文件过大，请选择 2MB 以内的电路文件');const next=C.validate(JSON.parse(await f.text()));change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('电路已导入，可以撤销恢复');}catch(error){toast(error instanceof SyntaxError?'文件不是有效 JSON':error.message);}e.target.value='';};
   // Activate touch controls directly on release. Some mobile browsers suppress
@@ -190,5 +203,5 @@
   try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){state=C.validate(JSON.parse(raw));if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次的存档无法读取，已打开新画布。');}
   render();if(!restored)fit(true);
   let oldWidth=svg.clientWidth,oldHeight=svg.clientHeight;new ResizeObserver(()=>{const w=svg.clientWidth,h=svg.clientHeight;camera.x+=(w-oldWidth)/2;camera.y+=(h-oldHeight)/2;oldWidth=w;oldHeight=h;setCamera();}).observe(svg);
-  window.LogicApp={getState:()=>C.clone({...snapshot(),camera}),getSimulation:()=>C.clone(sim)};
+  window.LogicApp={getState:()=>C.clone({...snapshot(),camera:expanded?expanded.camera:camera}),getSimulation:()=>C.clone(sim),getView:()=>({expanded:!!expanded,leafCount:expanded?.view.leaves.length||0,camera:{...camera}})};
 })();
