@@ -35,10 +35,10 @@
     const scale=initialView?Math.min(1,svg.clientWidth/320):Math.max(.2,Math.min(1.25,(svg.clientWidth-90)/(maxX-minX||1),(svg.clientHeight-190)/(maxY-minY||1)));
     camera={x:svg.clientWidth*(initialView&&svg.clientWidth>500?.68:.5)-(minX+maxX)/2*scale,y:svg.clientHeight*(initialView?.34:.49)-(minY+maxY)/2*scale,scale};setCamera();if(selected)renderInspector();save();
   }
-  function signalClass(bits){return bits?.includes(null)?'unknown':bits?.some(x=>x===1)?'high':'low';}
-  function signalText(bits){return !bits?'?':bits.length===1?(bits[0]??'?'):bits.slice().reverse().map(x=>x??'?').join('');}
+  function signalClass(bits){return bits?.some(x=>x===1)?'high':'low';}
+  function signalText(bits){return !bits?'0':bits.length===1?String(bits[0]||0):bits.slice().reverse().map(x=>x||0).join('');}
   const binary=n=>(n.value||0).toString(2).padStart(n.bits||1,'0');
-  const decimal=bits=>!bits||bits.includes(null)?'?':bits.reduce((value,bit,i)=>value+bit*2**i,0);
+  const decimal=bits=>!bits?0:bits.reduce((value,bit,i)=>value+(bit||0)*2**i,0);
   const path=ps=>ps.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
   function renderWires(){
     $('wire-layer').innerHTML=state.wires.map(w=>{const ps=C.points(w,state),bits=sim.wires[w.id],isBus=bits.length>1,mid=ps[Math.floor(ps.length/2)];return `<g class="wire ${selected?.id===w.id?'selected':''}" data-wire="${w.id}"><path class="wire-hit" d="${path(ps)}"/><path class="wire-line ${signalClass(bits)} ${isBus?'bus':''}" d="${path(ps)}"/>${isBus?`<text class="bus-label" x="${mid.x+8}" y="${mid.y-9}">${bits.length}b · ${signalText(bits)}</text>`:''}${[w.a,w.b].filter(e=>!e.node).map(e=>`<circle class="junction" cx="${e.x}" cy="${e.y}" r="3.3"/>`).join('')}</g>`;}).join('');
@@ -86,10 +86,9 @@
     $('undo').disabled=!past.length;$('redo').disabled=!future.length;$('delete').disabled=!selected;
     $('onboarding').hidden=!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
     $('node-count').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
-    const unknown=Object.values(sim.portValues).some(v=>v.includes(null));
-    $('sim-status').textContent=sim.issues.length?'检查连接':!state.wires.length?'等待连接':unknown?'含未知信号':'信号已稳定';
-    $('sim-dot').style.background=sim.issues.length||unknown?'#e5b978':'#91e6be';
-    $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'接通输入，看看信号如何流动。':unknown?'? 表示未接通或无法确定的信号。':'电路正在实时响应输入变化。');
+    $('sim-status').textContent=sim.issues.length?'检查连接':'信号已稳定';
+    $('sim-dot').style.background=sim.issues.length?'#e5b978':'#91e6be';
+    $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'未接线输入默认为 0（低电平）。':'电路正在实时响应输入变化。');
   }
   function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
   function previewPlacement(e){

@@ -39,13 +39,13 @@
   function simulate(state,overrides={},depth=0){
     if(depth>12)throw Error('自定义门嵌套过深');
     const defs=state.definitions||{},net=nets(state),issues=new Set(),values={},outputs={};
-    const unknown=w=>Array(w).fill(null);
-    for(const n of state.nodes)values[n.id]=spec(n,defs).outputs.map(unknown);
+    const low=w=>Array(w).fill(0);
+    for(const n of state.nodes)values[n.id]=spec(n,defs).outputs.map(low);
     for(const g of net.groups.values()){
       if(g.drivers.size>1)issues.add('一条网络连接了多个输出，请分开连线');
       if(new Set([...g.ports.values()].map(p=>p.width)).size>1)issues.add('导线两端位宽不一致，请使用集线器或分线器');
     }
-    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return unknown(p.width);const g=net.groups.get(id);if(g.drivers.size!==1||[...g.ports.values()].some(q=>q.width!==p.width))return unknown(p.width);const d=[...g.drivers.values()][0];return prev[d.node]?.[d.port]||unknown(p.width);}
+    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);const g=net.groups.get(id);if(g.drivers.size!==1||[...g.ports.values()].some(q=>q.width!==p.width))return low(p.width);const d=[...g.drivers.values()][0];return prev[d.node]?.[d.port]||low(p.width);}
     let current=values,settled=false;
     for(let step=0;step<Math.min(state.nodes.length+4,512);step++){
       const next={};
@@ -53,18 +53,18 @@
         const ps=ports(n,defs),ins=ps.filter(p=>p.dir==='in').map(p=>read(p,current));
         if(n.type==='input')next[n.id]=[overrides[n.id]||bitArray(n.value||0,width(n))];
         else if(n.type==='output')next[n.id]=[];
-        else if(n.type==='nand'){const a=ins[0][0],b=ins[1][0];next[n.id]=[[a===0||b===0?1:a===1&&b===1?0:null]];}
+        else if(n.type==='nand')next[n.id]=[[1-(ins[0][0]&ins[1][0])]];
         else if(n.type==='hub')next[n.id]=[ins.map(v=>v[0])];
         else if(n.type==='splitter')next[n.id]=ins[0].map(v=>[v]);
         else {const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1);next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}
       }
       if(JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
     }
-    if(!settled)issues.add('电路未收敛，请检查反馈回路');
+    if(!settled){issues.add('电路未收敛，请检查反馈回路；计算元件输出已设为低电平');for(const n of state.nodes)if(n.type!=='input')current[n.id]=spec(n,defs).outputs.map(low);}
     for(const n of state.nodes)if(n.type==='output')outputs[n.id]=read(ports(n,defs)[0],current);
     const wires={},portValues={};
     for(const n of state.nodes)for(const p of ports(n,defs))portValues[key(p)]=p.dir==='out'?current[n.id][p.port]:read(p,current);
-    for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id));const p=[...g.ports.values()][0];wires[w.id]=p?read(p,current):[null];}
+    for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id));const p=[...g.ports.values()][0];wires[w.id]=p?read(p,current):[0];}
     return {values:current,outputs,wires,portValues,issues:[...issues]};
   }
   function makeDefinition(state,name){
