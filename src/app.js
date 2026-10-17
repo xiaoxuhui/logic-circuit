@@ -7,15 +7,15 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer;
-  let past=[],future=[],placement=null,busEdit=null;
+  let past=[],future=[],placement=null,busEdit=null,expanded=null;
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:names[n.type]);
   const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions});
   function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
-  function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...snapshot(),camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
+  function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...snapshot(),camera:expanded?expanded.camera:camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
   function commit(before){state.definitions=C.pruneDefinitions(state);if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}render();save();}
-  function change(fn){const before=snapshot();fn();commit(before);}
+  function change(fn){if(expanded){toast('全部收回后即可继续编辑电路');return;}const before=snapshot();fn();commit(before);}
   function restore(s){state=C.clone(s);selected=null;render();save();}
   function undo(){if(!past.length)return;future.push(snapshot());restore(past.pop());}
   function redo(){if(!future.length)return;past.push(snapshot());restore(future.pop());}
@@ -26,8 +26,9 @@
     $('grid').setAttribute('patternTransform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('zoom-label').textContent=Math.round(camera.scale*100)+'%';
   }
-  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
+  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
   function fit(initialView=false){
+    if(expanded){const view=expanded.view,scale=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-180)/view.h));camera={x:(svg.clientWidth-view.w*scale)/2,y:100+(svg.clientHeight-180-view.h*scale)/2,scale};setCamera();save();return;}
     if(!state.nodes.length){camera={x:svg.clientWidth/2,y:svg.clientHeight/2,scale:1};setCamera();return;}
     const boxes=state.nodes.map(n=>({...n,...C.size(n,state.definitions)})),ps=state.wires.flatMap(w=>C.points(w,state));
     const minX=Math.min(...boxes.map(b=>b.x),...ps.map(p=>p.x)),maxX=Math.max(...boxes.map(b=>b.x+b.w),...ps.map(p=>p.x));
@@ -48,10 +49,10 @@
       let symbol='';
       if(n.type==='nand')symbol='<text class="node-glyph" x="76" y="66" text-anchor="middle">⊼</text>';
       else if(n.type==='input')symbol=(n.bits||1)>1?`<foreignObject x="33" y="33" width="86" height="32"><input xmlns="http://www.w3.org/1999/xhtml" class="binary-input" data-binary="${n.id}" type="text" inputmode="numeric" pattern="[01]{1,${n.bits}}" maxlength="${n.bits}" value="${binary(n)}" aria-label="${escape(t)} ${n.bits}位二进制输入" title="输入 ${n.bits} 位 0/1，按 Enter 确认" autocomplete="off" spellcheck="false"/></foreignObject>`:`<g class="toggle ${signalClass(value)}" data-toggle="${n.id}" role="button" tabindex="0" aria-label="切换${escape(t)}" aria-pressed="${!!n.value}"><rect x="51" y="32" width="50" height="32" rx="6"/><text x="76" y="54" text-anchor="middle">${signalText(value)}</text></g>`;
-      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':signalClass(value)==='unknown'?'#b7a17a':'#7793a8';symbol=value.length>1?`<g class="numeric-display"><rect x="39" y="32" width="74" height="34" rx="4" fill="#0d1c24" stroke="#496675"/><text x="76" y="55" text-anchor="middle" fill="${color}" font-family="monospace" font-size="21">${decimal(value)}</text><text x="76" y="${z.h+27}" text-anchor="middle" fill="#7494a5" font-size="7">DEC · ${value.length} BIT</text></g>`:`<g class="single-indicator"><circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="13">${signalText(value)}</text></g>`;}
+      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':'#7793a8';symbol=value.length>1?`<g class="numeric-display"><rect x="39" y="32" width="74" height="34" rx="4" fill="#0d1c24" stroke="#496675"/><text x="76" y="55" text-anchor="middle" fill="${color}" font-family="monospace" font-size="21">${decimal(value)}</text><text x="76" y="${z.h+27}" text-anchor="middle" fill="#7494a5" font-size="7">DEC · ${value.length} BIT</text></g>`:`<g class="single-indicator"><circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="13">${signalText(value)}</text></g>`;}
       else if(n.type==='custom')symbol=`<text x="76" y="${z.h/2+10}" text-anchor="middle" fill="#bca6dd" font-size="23">◇</text>`;
       else symbol=`<path d="M 65 38 L ${n.type==='hub'?87:65} ${z.h/2} L ${n.type==='hub'?65:87} ${z.h-20}" fill="none" stroke="#7dabc4" stroke-width="2"/>`;
-      return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':signalClass(bits)==='unknown'?'#b7a17a':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="76" y="${z.h+15}" text-anchor="middle">${escape(n.type==='custom'?'CUSTOM GATE':subtitles[n.type])}</text></g>`;
+      return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="76" y="${z.h+15}" text-anchor="middle">${escape(n.type==='custom'?'CUSTOM GATE':subtitles[n.type])}</text></g>`;
     }).join('');
   }
   function renderInspector(){
@@ -78,18 +79,21 @@
     const ids=Object.keys(state.definitions).filter(id=>!state.definitions[id].hidden);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
     $('custom-library').innerHTML=ids.map(id=>{const d=state.definitions[id];return `<div class="custom-entry"><button class="component" data-custom="${id}" title="拖出 ${escape(d.name)}；右键从元件库删除"><span class="component-symbol" style="color:#bca6dd">◇</span><span><b>${escape(d.name)}</b><small>${d.inputs.length} 输入 / ${d.outputs.length} 输出</small></span></button><button class="delete-custom" data-delete-custom="${id}" title="删除 ${escape(d.name)}" aria-label="删除保存的逻辑门 ${escape(d.name)}"><span aria-hidden="true">×</span><span class="mobile-delete-label">删除</span></button></div>`;}).join('');
   }
-  function deleteSavedGate(id){if(placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
+  function deleteSavedGate(id){if(expanded||placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
   $('custom-library').addEventListener('click',e=>{const b=e.target.closest('[data-delete-custom]');if(b){e.stopPropagation();deleteSavedGate(b.dataset.deleteCustom);}});
   $('custom-library').addEventListener('contextmenu',e=>{const b=e.target.closest('[data-custom],[data-delete-custom]');if(b){e.preventDefault();deleteSavedGate(b.dataset.custom||b.dataset.deleteCustom);}});
   function render(){
-    sim=C.simulate(state);renderWires();renderNodes();renderInspector();renderLibrary();setCamera();
-    $('undo').disabled=!past.length;$('redo').disabled=!future.length;$('delete').disabled=!selected;
-    $('onboarding').hidden=!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
-    $('node-count').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
+    sim=C.simulate(state);if(expanded){$('wire-layer').innerHTML='';$('node-layer').innerHTML=expanded.view.svg;$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');$('selection-panel').innerHTML='<div class="selection-eyebrow">已全部展开</div><div class="selected-name">查看内部电路</div><p class="selection-description">所有自定义实例已递归展开。<br>平移、缩放可查看细节。<br>点击“全部收回”恢复编辑。</p>';$('selection-status').textContent='只读展开 · '+expanded.view.leaves.length+' 个原始元件';}else{renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
+    $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;
+    for(const id of ['package','import','new','wire-mode'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded);
+    $('expand').disabled=!expanded&&!state.nodes.some(n=>n.type==='custom');$('expand').textContent=expanded?'全部收回':'全部展开';$('expand').setAttribute('aria-pressed',String(!!expanded));
+    $('onboarding').hidden=!!expanded||!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
+    $('node-count').textContent=expanded?expanded.view.leaves.length+' 个原始元件 · 只读':state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
     $('sim-status').textContent=sim.issues.length?'检查连接':'信号已稳定';
     $('sim-dot').style.background=sim.issues.length?'#e5b978':'#91e6be';
     $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'未接线输入默认为 0（低电平）。':'电路正在实时响应输入变化。');
   }
+  function toggleExpanded(){if(gesture||placement||document.querySelector('dialog[open]'))return;if(expanded){const previous=expanded;expanded=null;camera={...previous.camera};setMode(previous.mode);selected=null;render();save();return;}if(!state.nodes.some(n=>n.type==='custom')){toast('先在画布上放置一个自定义门');return;}try{const view=window.LogicExpanded.build(snapshot());expanded={view,camera:{...camera},mode};selected=null;setMode('pan');render();fit();}catch(error){toast(error.message);}}
   function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
   function previewPlacement(e){
     if(!placement)return;const g=placement,n=g.node,z=C.size(n,state.definitions),r=svg.getBoundingClientRect(),hit=document.elementFromPoint(e.clientX,e.clientY),inside=e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom&&(hit===svg||svg.contains(hit)),scale=inside?camera.scale:1;
@@ -104,7 +108,7 @@
     change(()=>{state.nodes.push(g.node);selected={type:'node',id:g.node.id};});
   }
   document.querySelector('.library').addEventListener('pointerdown',e=>{
-    const source=e.target.closest('[data-add],[data-custom]');if(!source||e.button!==0||gesture||placement)return;if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
+    const source=e.target.closest('[data-add],[data-custom]');if(!source||e.button!==0||gesture||placement||expanded)return;if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
     placement={node:placementNode(source.dataset.add||'custom',source.dataset.custom),source,pointerId:e.pointerId,start:{x:e.clientX,y:e.clientY},moved:false};source.setPointerCapture(e.pointerId);source.classList.add('being-dragged');document.body.classList.add('placing-component');placementPreview.hidden=false;previewPlacement(e);e.preventDefault();
   });
   document.addEventListener('pointermove',e=>{if(placement&&e.pointerId===placement.pointerId){previewPlacement(e);e.preventDefault();}},{passive:false});
@@ -116,7 +120,7 @@
   function updateBusSummary(){if(!busEdit)return;const value=$('bus-count').value.trim(),count=/^[0-9]+$/.test(value)?Number(value):0,hub=busEdit.node.type==='hub';$('bus-summary').textContent=count>=2&&count<=8?(hub?count+' 根单比特线 → 1 条 '+count+' 位总线':'1 条 '+count+' 位总线 → '+count+' 根单比特线'):(hub?'输入要合成一条总线的单比特线数量。':'输入要从一条总线拆出的单比特线数量。');}
   function openBusDialog(node,center=null){busEdit={node,center};$('bus-heading').textContent='设置'+names[node.type]+'线数';$('bus-count').value=center?'':String(node.bits);$('bus-error').textContent='';$('bus-confirm').textContent=center?'放置元件':'应用';updateBusSummary();$('bus-dialog').showModal();$('bus-count').focus();if(!center)$('bus-count').select();}
   $('bus-count').oninput=()=>{updateBusSummary();$('bus-error').textContent='';};
-  $('bus-dialog').addEventListener('close',()=>{busEdit=null;});
+  $('bus-dialog').addEventListener('close',()=>{if(!$('bus-dialog').open)busEdit=null;});
   $('bus-form').onsubmit=e=>{e.preventDefault();if(!busEdit)return;const value=$('bus-count').value.trim(),count=Number(value);if(!/^[0-9]+$/.test(value)||!Number.isInteger(count)||count<2||count>8){$('bus-error').textContent='线数请输入 2–8 之间的整数';return;}const {node,center}=busEdit;if(center){node.bits=count;const z=C.size(node,state.definitions);node.x=Math.round((center.x-z.w/2)/12)*12;node.y=Math.round((center.y-z.h/2)/12)*12;change(()=>{state.nodes.push(node);selected={type:'node',id:node.id};});}else{const current=state.nodes.find(n=>n.id===node.id);if(!current){$('bus-dialog').close();return;}change(()=>{resizeBits(current,count);selected={type:'node',id:current.id};});}busEdit=null;$('bus-dialog').close();};
   function remove(target=selected){if(!target)return;change(()=>{if(target.type==='node'||target.type==='nodes'){const ids=new Set(target.type==='nodes'?target.ids:[target.id]);state.nodes=state.nodes.filter(n=>!ids.has(n.id));state.wires=state.wires.filter(w=>!ids.has(w.a.node)&&!ids.has(w.b.node));}else state.wires=state.wires.filter(w=>w.id!==target.id);selected=null;});}
   function endpoint(p){return p.node?{node:p.node,dir:p.dir,port:p.port}:{x:p.x,y:p.y};}
@@ -166,6 +170,7 @@
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
     if(e.target.matches('input,select,textarea')||e.target.isContentEditable||document.querySelector('dialog[open]')||placement)return;
+    if(expanded){if(e.key==='Escape'){e.preventDefault();toggleExpanded();}else if(['Backspace','Delete'].includes(e.key)||e.ctrlKey||e.metaKey)e.preventDefault();return;}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'){e.preventDefault();if(gesture)return;selected=state.nodes.length?{type:'nodes',ids:state.nodes.map(n=>n.id)}:null;window.getSelection()?.removeAllRanges();render();return;}
     if(e.code==='Space'){e.preventDefault();space=true;setMode(mode);}
     if(e.key==='Escape'){if(gesture){if(gesture.type==='node')state=gesture.before;gesture=null;$('draft-layer').innerHTML='';}selected=null;render();}
@@ -178,11 +183,12 @@
   window.addEventListener('blur',()=>{endPlacement(null,true);if(gesture?.type==='right-delete'){const id=gesture.pointerId;gesture=null;if(svg.hasPointerCapture(id))svg.releasePointerCapture(id);}space=false;setMode(mode);});
   $('wire-mode').onclick=()=>setMode('wire');$('pan-mode').onclick=()=>setMode('pan');$('undo').onclick=undo;$('redo').onclick=redo;$('delete').onclick=()=>remove();
   $('zoom-in').onclick=()=>zoom(1.2);$('zoom-out').onclick=()=>zoom(1/1.2);$('fit').onclick=()=>fit();
+  $('expand').onclick=toggleExpanded;
   $('help').onclick=()=>$('help-dialog').showModal();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
   $('package').onclick=()=>{try{const d=C.makeDefinition(state,'新逻辑门');$('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';$('package-error').textContent='';$('package-dialog').showModal();$('gate-name').focus();}catch(e){toast(e.message);}};
   $('package-form').onsubmit=e=>{e.preventDefault();try{if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');const d=C.makeDefinition(state,$('gate-name').value);change(()=>state.definitions[uid('g')]=d);$('package-dialog').close();$('gate-name').value='';toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');}catch(e){$('package-error').textContent=e.message;}};
   $('new').onclick=()=>$('new-dialog').showModal();$('confirm-new').onclick=()=>{change(()=>{state={...initial(),definitions:state.definitions};selected=null;});fit(true);$('new-dialog').close();};
-  $('export').onclick=()=>{const blob=new Blob([JSON.stringify({...snapshot(),camera},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='逻辑工坊-电路.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('电路与自定义门已导出');};
+  $('export').onclick=()=>{const blob=new Blob([JSON.stringify({...snapshot(),camera:expanded?expanded.camera:camera},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='逻辑工坊-电路.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('电路与自定义门已导出');};
   $('import').onclick=()=>$('file-input').click();
   $('file-input').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>2*1024*1024)throw Error('文件过大，请选择 2MB 以内的电路文件');const next=C.validate(JSON.parse(await f.text()));change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('电路已导入，可以撤销恢复');}catch(error){toast(error instanceof SyntaxError?'文件不是有效 JSON':error.message);}e.target.value='';};
   // Activate touch controls directly on release. Some mobile browsers suppress
@@ -197,5 +203,5 @@
   try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){state=C.validate(JSON.parse(raw));if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次的存档无法读取，已打开新画布。');}
   render();if(!restored)fit(true);
   let oldWidth=svg.clientWidth,oldHeight=svg.clientHeight;new ResizeObserver(()=>{const w=svg.clientWidth,h=svg.clientHeight;camera.x+=(w-oldWidth)/2;camera.y+=(h-oldHeight)/2;oldWidth=w;oldHeight=h;setCamera();}).observe(svg);
-  window.LogicApp={getState:()=>C.clone({...snapshot(),camera}),getSimulation:()=>C.clone(sim)};
+  window.LogicApp={getState:()=>C.clone({...snapshot(),camera:expanded?expanded.camera:camera}),getSimulation:()=>C.clone(sim),getView:()=>({expanded:!!expanded,leafCount:expanded?.view.leaves.length||0,camera:{...camera}})};
 })();
