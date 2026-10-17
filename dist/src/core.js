@@ -13,8 +13,11 @@
     const d=defs[n.def];if(!d)throw Error('自定义门不存在');
     return {inputs:d.inputs.map(p=>p.width),outputs:d.outputs.map(p=>p.width),inLabels:d.inputs.map(p=>p.label),outLabels:d.outputs.map(p=>p.label)};
   }
-  function size(n,defs){const s=spec(n,defs);return {w:152,h:Math.max(80,Math.max(s.inputs.length,s.outputs.length)*24+32)};}
-  function ports(n,defs){const s=spec(n,defs),z=size(n,defs),out=[];for(const dir of ['in','out']){const ws=s[dir==='in'?'inputs':'outputs'],labels=s[dir==='in'?'inLabels':'outLabels'];ws.forEach((w,i)=>out.push({node:n.id,dir,port:i,width:w,label:labels[i],x:n.x+(dir==='out'?z.w:0),y:n.y+z.h/2-(ws.length-1)*12+i*24}));}return out;}
+  function baseSize(n,defs){const s=spec(n,defs);return {w:152,h:Math.max(80,Math.max(s.inputs.length,s.outputs.length)*24+32)};}
+  function size(n,defs){const z=baseSize(n,defs);return (n.rotation||0)%180?{w:z.h,h:z.w}:z;}
+  function rotatedPoint(p,n,defs){const z=baseSize(n,defs);switch(n.rotation||0){case 90:return {x:z.h-p.y,y:p.x};case 180:return {x:z.w-p.x,y:z.h-p.y};case 270:return {x:p.y,y:z.w-p.x};default:return p;}}
+  function rotationTransform(n,defs){const z=baseSize(n,defs);switch(n.rotation||0){case 90:return `translate(${z.h} 0) rotate(90)`;case 180:return `translate(${z.w} ${z.h}) rotate(180)`;case 270:return `translate(0 ${z.w}) rotate(270)`;default:return '';}}
+  function ports(n,defs){const s=spec(n,defs),z=baseSize(n,defs),out=[];for(const dir of ['in','out']){const ws=s[dir==='in'?'inputs':'outputs'],labels=s[dir==='in'?'inLabels':'outLabels'];ws.forEach((w,i)=>{const p=rotatedPoint({x:dir==='out'?z.w:0,y:z.h/2-(ws.length-1)*12+i*24},n,defs);out.push({node:n.id,dir,port:i,width:w,label:labels[i],x:n.x+p.x,y:n.y+p.y});});}return out;}
   const key=p=>p.node+':'+p.dir+':'+p.port;
   function anchor(e,state){if(!e.node)return {x:e.x,y:e.y};const n=state.nodes.find(n=>n.id===e.node);return ports(n,state.definitions).find(p=>p.dir===e.dir&&p.port===e.port);}
   function points(w,state){const a=anchor(w.a,state),b=anchor(w.b,state);if(w.via?.length)return [a,...w.via,b];const x=(a.x+b.x)/2;return [a,{x,y:a.y},{x,y:b.y},b];}
@@ -27,13 +30,14 @@
     const ends=ws.map(w=>[anchor(w.a,state),anchor(w.b,state)]);
     for(let i=0;i<ws.length;i++)for(let j=0;j<i;j++){
       let touch=false;
-      for(const [ei,pi] of [[i,j],[j,i]])for(const e of ends[ei])for(let k=1;k<paths[pi].length;k++)if(distance(e,project(e,paths[pi][k-1],paths[pi][k]))<0.05)touch=true;
+      for(const a of [ws[i].a,ws[i].b])for(const b of [ws[j].a,ws[j].b])if(a.node&&b.node&&key(a)===key(b))touch=true;
+      for(const [ei,pi] of [[i,j],[j,i]])for(const [index,e] of ends[ei].entries())if(![ws[ei].a,ws[ei].b][index].node)for(let k=1;k<paths[pi].length;k++)if(distance(e,project(e,paths[pi][k-1],paths[pi][k]))<0.05)touch=true;
       if(touch)join(i,j);
     }
     const groups=new Map(),portNet=new Map(),wireNet=new Map();
     ws.forEach((w,i)=>{const id=find(i);if(!groups.has(id))groups.set(id,{id,drivers:new Map(),ports:new Map(),wires:[]});const g=groups.get(id);g.wires.push(w.id);wireNet.set(w.id,id);for(const e of [w.a,w.b])if(e.node){const k=key(e),p=anchor(e,state);g.ports.set(k,p);portNet.set(k,id);if(e.dir==='out')g.drivers.set(k,p);}});
     // A free endpoint placed exactly on a port also attaches to it.
-    for(const n of state.nodes)for(const p of ports(n,state.definitions))for(let i=0;i<ws.length;i++)if(ends[i].some(e=>distance(e,p)<0.05)){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
+    for(const n of state.nodes)for(const p of ports(n,state.definitions))for(let i=0;i<ws.length;i++)if(ends[i].some((e,index)=>![ws[i].a,ws[i].b][index].node&&distance(e,p)<0.05)){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
     return {groups,portNet,wireNet};
   }
   function simulate(state,overrides={},depth=0){
@@ -97,7 +101,7 @@
     function circuit(s){
       if(!Array.isArray(s.nodes)||!Array.isArray(s.wires)||s.nodes.length>500||s.wires.length>1500)fail();
       const nodeIds=new Set(),wireIds=new Set();
-      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>8))fail();if(['hub','splitter'].includes(n.type)&&width(n)<2)fail();if(n.value!==undefined&&(!Number.isInteger(n.value)||n.value<0||n.value>=2**width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
+      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.rotation!==undefined&&![0,90,180,270].includes(n.rotation))fail();if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>8))fail();if(['hub','splitter'].includes(n.type)&&width(n)<2)fail();if(n.value!==undefined&&(!Number.isInteger(n.value)||n.value<0||n.value>=2**width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
       for(const w of s.wires){if(!w||!safeId(w.id)||wireIds.has(w.id))fail();wireIds.add(w.id);for(const e of [w.a,w.b]){if(!e||typeof e!=='object')fail();if(e.node){if(!nodeIds.has(e.node)||!['in','out'].includes(e.dir)||!Number.isInteger(e.port)||e.port<0)fail();const n=s.nodes.find(n=>n.id===e.node);let ps;try{ps=spec(n,defs);}catch{fail();}if(e.port>=ps[e.dir==='in'?'inputs':'outputs'].length)fail();}else if(!finite(e.x)||!finite(e.y))fail();}if(w.via!==undefined&&(!Array.isArray(w.via)||w.via.length>100||w.via.some(p=>!finite(p.x)||!finite(p.y))))fail();}
     }
     for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(!ps.length||ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
@@ -106,5 +110,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,size,ports,key,anchor,points,project,distance,nets,simulate,makeDefinition,pruneDefinitions,deleteDefinition,validate,bitArray};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,project,distance,nets,simulate,makeDefinition,pruneDefinitions,deleteDefinition,validate,bitArray};
 });

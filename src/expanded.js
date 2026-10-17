@@ -11,10 +11,10 @@
     const defs=source.definitions,leaves=[],frames=[],layouts=[];let total=0,netCounter=0;
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
       if(depth>12)throw Error('展开层数超过限制');
-      const sim=C.simulate(local,overrides),items=new Map(),inputs={},outputs={};
+      const sim=C.simulate(local,overrides),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(++total>5000)throw Error('展开后的元件过多，请先减少电路规模');
-        const s=C.spec(n,defs),label=n.label||(n.type==='custom'?defs[n.def].name:names[n.type]);
+        const s=C.spec(n,defs),label=(n.type==='input'?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.type==='custom'?defs[n.def].name:names[n.type]));
         if(n.type==='custom'){
           const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=sim.portValues[C.key({node:n.id,dir:'in',port:i})]);
           const child=circuit({nodes:d.nodes,wires:d.wires,definitions:defs},input,true,depth+1,scope+'/'+n.id,d),w=child.w+40,h=child.h+64;
@@ -25,13 +25,13 @@
         }
         if(boundary&&(n.type==='input'||n.type==='output')){
           const isInput=n.type==='input',bits=isInput?sim.values[n.id][0]:sim.outputs[n.id],point={x:isInput?180:0,y:38},ports=boundaryPorts[isInput?'inputs':'outputs'],index=ports.findIndex(p=>p.id===n.id),label=(isInput?'IN':'OUT')+(index+1)+' · '+ports[index].label;
-          const markup=`<g class="expanded-interface"><title>${esc(label)}</title><circle cx="${point.x}" cy="38" r="4" fill="${color(bits)}"/><text x="8" y="18">${esc(label.slice(0,22))}</text><text x="8" y="58">${bits.length} 位 · ${bitText(bits)}</text></g>`;
+          const markup=`<g class="expanded-interface"><title>${esc(label)}</title><circle cx="${point.x}" cy="38" r="4" fill="${color(bits)}"/><text x="8" y="18">${esc(label.slice(0,16))}</text><text x="8" y="58">${bits.length} 位 · ${bitText(bits)}</text></g>`;
           items.set(n.id,{n,w:180,h:70,ins:isInput?[]:[point],outs:isInput?[point]:[],markup,order:index});continue;
         }
         const upright={...n,rotation:0},z=C.size(upright,defs),ports=C.ports({...upright,x:0,y:0},defs),ins=ports.filter(p=>p.dir==='in'),outs=ports.filter(p=>p.dir==='out');
         let glyph='⊼';if(n.type==='input')glyph=bitText(sim.values[n.id][0]);else if(n.type==='output')glyph=String(dec(sim.outputs[n.id]));else if(n.type==='hub')glyph=(n.bits||1)+' → 1';else if(n.type==='splitter')glyph='1 → '+(n.bits||1);
-        const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}"><rect width="${z.w}" height="${z.h}" rx="8"/><text class="expanded-title" x="76" y="20" text-anchor="middle">${esc(label)}</text><text class="expanded-glyph" x="76" y="${z.h/2+18}" text-anchor="middle">${esc(glyph)}</text>${ports.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g>`;
-        items.set(n.id,{n,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
+        const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}"><title>${esc(label)}</title><rect width="${z.w}" height="${z.h}" rx="8"/><text class="expanded-title" x="76" y="20" text-anchor="middle">${esc(label.length>12?label.slice(0,11)+'…':label)}</text><text class="expanded-glyph" x="76" y="${z.h/2+18}" text-anchor="middle">${esc(glyph)}</text>${ports.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g>`;
+        items.set(n.id,{n,label,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
       }
       const net=C.nets(local),groups=[...net.groups.values()],columns=new Map(),top=65+groups.length*24;
       for(const item of items.values()){const key=boundary&&item.n.type==='input'?-Infinity:boundary&&item.n.type==='output'?Infinity:item.n.x;if(!columns.has(key))columns.set(key,[]);columns.get(key).push(item);}
@@ -46,7 +46,7 @@
       for(const [index,group] of groups.entries()){
         const id='net-'+(++netCounter),label='N'+netCounter,bits=sim.wires[group.wires[0]],laneY=35+index*24,paths=[],ports=[...group.ports.values()];
         const endpoints=ports.map(p=>{const item=items.get(p.node),point=(p.dir==='in'?item.ins:item.outs)[p.port];return {x:item.x+point.x,y:item.y+point.y,lane:(p.dir==='in'?item.inLanes:item.outLanes)[p.port]};});
-        const endpointName=p=>{const item=items.get(p.node);return (item.n.label||(item.n.type==='custom'?defs[item.n.def].name:names[item.n.type]))+' '+(p.dir==='in'?'输入':'输出')+(p.port+1);};
+        const endpointName=p=>{const item=items.get(p.node);return (item.label||item.n.label||(item.n.type==='custom'?defs[item.n.def].name:names[item.n.type]))+' '+(p.dir==='in'?'输入':'输出')+(p.port+1);};
         const description=label+' · '+ports.map(endpointName).join(' ↔ ')+' · 值 '+bitText(bits);
         if(endpoints.length){const lanes=endpoints.map(p=>p.lane);paths.push([{x:Math.min(...lanes),y:laneY},{x:Math.max(...lanes),y:laneY}]);for(const p of endpoints)paths.push([{x:p.x,y:p.y},{x:p.lane,y:p.y},{x:p.lane,y:laneY}]);}
         else paths.push([{x:30,y:laneY},{x:130,y:laneY}]);
