@@ -7,7 +7,8 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer;
-  let past=[],future=[];
+  let past=[],future=[],placement=null;
+  const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:names[n.type]);
   const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions});
@@ -71,7 +72,6 @@
   function renderLibrary(){
     const ids=Object.keys(state.definitions);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
     $('custom-library').innerHTML=ids.map(id=>{const d=state.definitions[id];return `<button class="component" data-custom="${id}" title="${escape(d.name)}"><span class="component-symbol" style="color:#bca6dd">◇</span><span><b>${escape(d.name)}</b><small>${d.inputs.length} 输入 / ${d.outputs.length} 输出</small></span><span class="plus">+</span></button>`;}).join('');
-    $('custom-library').querySelectorAll('[data-custom]').forEach(b=>b.onclick=()=>add('custom',b.dataset.custom));
   }
   function render(){
     sim=C.simulate(state);renderWires();renderNodes();renderInspector();renderLibrary();setCamera();
@@ -83,14 +83,26 @@
     $('sim-dot').style.background=sim.issues.length||unknown?'#e5b978':'#91e6be';
     $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'接通输入，看看信号如何流动。':unknown?'? 表示未接通或无法确定的信号。':'电路正在实时响应输入变化。');
   }
-  function add(type,def){
-    if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
-    let x=(svg.clientWidth/2-camera.x)/camera.scale-76,y=(svg.clientHeight*.42-camera.y)/camera.scale-40;
-    for(let i=0;i<50;i++){const overlaps=state.nodes.some(n=>{const z=C.size(n,state.definitions);return x<n.x+z.w+20&&x+172>n.x&&y<n.y+z.h+20&&y+100>n.y;});if(!overlaps)break;x+=48;y+=72;if(i%5===4){x-=288;y-=290;}}
-    const n={id:uid('n'),type,x:Math.round(x/12)*12,y:Math.round(y/12)*12};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=4;if(type==='custom')n.def=def;
-    change(()=>{state.nodes.push(n);selected={type:'node',id:n.id};});
-    const z=C.size(n,state.definitions),screen={x:n.x*camera.scale+camera.x,y:n.y*camera.scale+camera.y};if(screen.x<20||screen.x+z.w*camera.scale>svg.clientWidth-20||screen.y<100||screen.y+z.h*camera.scale>svg.clientHeight-50)fit();
+  function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=4;if(type==='custom')n.def=def;return n;}
+  function previewPlacement(e){
+    if(!placement)return;const g=placement,n=g.node,z=C.size(n,state.definitions),r=svg.getBoundingClientRect(),hit=document.elementFromPoint(e.clientX,e.clientY),inside=e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom&&(hit===svg||svg.contains(hit)),scale=inside?camera.scale:1;
+    g.inside=inside;g.point={clientX:e.clientX,clientY:e.clientY};g.moved=g.moved||Math.hypot(e.clientX-g.start.x,e.clientY-g.start.y)>5;
+    placementPreview.style.left=(e.clientX-(z.w/2+8)*scale)+'px';placementPreview.style.top=(e.clientY-(z.h/2+8)*scale)+'px';placementPreview.style.width=(z.w+16)*scale+'px';placementPreview.style.height=(z.h+16)*scale+'px';placementPreview.classList.toggle('can-drop',inside);
+    placementPreview.innerHTML=`<svg viewBox="-8 -8 ${z.w+16} ${z.h+16}" width="100%" height="100%"><g class="node selected"><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(title(n))}</text><text x="76" y="${z.h/2+15}" text-anchor="middle" fill="#91e6be" font-size="30">${({nand:'⊼',input:'01',output:'◉',hub:'⇥',splitter:'⇤',custom:'◇'})[n.type]}</text>${C.ports(n,state.definitions).map(p=>`<circle cx="${p.x}" cy="${p.y}" r="5" fill="#17252e" stroke="#91e6be"/>`).join('')}</g></svg>`;
   }
+  function endPlacement(e,cancel=false){
+    if(!placement)return;const g=placement;if(e&&e.pointerId!==undefined&&e.pointerId!==g.pointerId)return;if(e&&!cancel)previewPlacement(e);placement=null;placementPreview.hidden=true;document.body.classList.remove('placing-component');g.source.classList.remove('being-dragged');if(g.source.hasPointerCapture(g.pointerId))g.source.releasePointerCapture(g.pointerId);
+    if(cancel||!g.moved||!g.inside)return;
+    const p=worldPoint(g.point),z=C.size(g.node,state.definitions);g.node.x=Math.round((p.x-z.w/2)/12)*12;g.node.y=Math.round((p.y-z.h/2)/12)*12;
+    change(()=>{state.nodes.push(g.node);selected={type:'node',id:g.node.id};});
+  }
+  document.querySelector('.library').addEventListener('pointerdown',e=>{
+    const source=e.target.closest('[data-add],[data-custom]');if(!source||e.button!==0||gesture||placement)return;if(state.nodes.length>=500)return toast('当前画布已达 500 个元件');
+    placement={node:placementNode(source.dataset.add||'custom',source.dataset.custom),source,pointerId:e.pointerId,start:{x:e.clientX,y:e.clientY},moved:false};source.setPointerCapture(e.pointerId);source.classList.add('being-dragged');document.body.classList.add('placing-component');placementPreview.hidden=false;previewPlacement(e);e.preventDefault();
+  });
+  document.addEventListener('pointermove',e=>{if(placement&&e.pointerId===placement.pointerId){previewPlacement(e);e.preventDefault();}},{passive:false});
+  document.addEventListener('pointerup',e=>endPlacement(e));document.addEventListener('pointercancel',e=>endPlacement(e,true));
+  document.addEventListener('lostpointercapture',e=>{if(placement&&e.pointerId===placement.pointerId)endPlacement(e,true);});
   function toggle(id){const n=state.nodes.find(n=>n.id===id);if(!n)return;change(()=>{n.value=((n.value||0)+1)%(2**(n.bits||1));selected={type:'node',id};});}
   function remove(){if(!selected)return;change(()=>{if(selected.type==='node'){state.nodes=state.nodes.filter(n=>n.id!==selected.id);state.wires=state.wires.filter(w=>w.a.node!==selected.id&&w.b.node!==selected.id);}else state.wires=state.wires.filter(w=>w.id!==selected.id);selected=null;});}
   function endpoint(p){return p.node?{node:p.node,dir:p.dir,port:p.port}:{x:p.x,y:p.y};}
@@ -104,9 +116,9 @@
   function setMode(next){mode=next;$('wire-mode').classList.toggle('active',mode==='wire');$('pan-mode').classList.toggle('active',mode==='pan');svg.classList.toggle('panning',mode==='pan'||space);}
   svg.addEventListener('contextmenu',e=>e.preventDefault());
   svg.addEventListener('pointerdown',e=>{
-    if(e.button!==0&&e.button!==1)return;
+    if(![0,1,2].includes(e.button)||gesture||placement)return;
     const p=worldPoint(e),nodeEl=e.target.closest('[data-node]'),port=e.target.closest('[data-port]'),wire=e.target.closest('[data-wire]'),toggleEl=e.target.closest('[data-toggle]');
-    if(e.button===1||space||mode==='pan'){gesture={type:'pan',start:localPoint(e),camera:{...camera}};svg.classList.add('dragging');}
+    if(e.button===2||e.button===1||space||mode==='pan'){gesture={type:'pan',start:localPoint(e),camera:{...camera}};svg.classList.add('dragging');}
     else if(toggleEl)return;
     else if(port){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node),q=C.ports(n,state.definitions).find(q=>q.dir===port.dataset.dir&&q.port===Number(port.dataset.port));gesture={type:'wire',start:q,a:endpoint(q),current:q,moved:false};}
     else if(nodeEl){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node);selected={type:'node',id:n.id};gesture={type:'node',id:n.id,start:p,x:n.x,y:n.y,before:snapshot(),moved:false};render();}
@@ -132,7 +144,8 @@
   svg.addEventListener('keydown',e=>{const t=e.target.closest('[data-toggle]');if(t&&['Enter',' '].includes(e.key)){e.preventDefault();toggle(t.dataset.toggle);}});
   svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e));},{passive:false});
   document.addEventListener('keydown',e=>{
-    if(e.target.matches('input,select,textarea')||document.querySelector('dialog[open]'))return;
+    if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
+    if(e.target.matches('input,select,textarea')||document.querySelector('dialog[open]')||placement)return;
     if(e.code==='Space'){e.preventDefault();space=true;setMode(mode);}
     if(e.key==='Escape'){if(gesture){if(gesture.type==='node')state=gesture.before;gesture=null;$('draft-layer').innerHTML='';}selected=null;render();}
     if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();remove();}
@@ -141,8 +154,7 @@
     if(!e.ctrlKey&&!e.metaKey){if(e.key.toLowerCase()==='h')setMode('pan');if(e.key.toLowerCase()==='w')setMode('wire');}
   });
   document.addEventListener('keyup',e=>{if(e.code==='Space'){space=false;setMode(mode);}});
-  window.addEventListener('blur',()=>{space=false;setMode(mode);});
-  document.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>add(b.dataset.add));
+  window.addEventListener('blur',()=>{endPlacement(null,true);space=false;setMode(mode);});
   $('wire-mode').onclick=()=>setMode('wire');$('pan-mode').onclick=()=>setMode('pan');$('undo').onclick=undo;$('redo').onclick=redo;$('delete').onclick=remove;
   $('zoom-in').onclick=()=>zoom(1.2);$('zoom-out').onclick=()=>zoom(1/1.2);$('fit').onclick=()=>fit();
   $('help').onclick=()=>$('help-dialog').showModal();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
