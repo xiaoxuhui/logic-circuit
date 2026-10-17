@@ -106,5 +106,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,size,ports,key,anchor,points,project,distance,simulate,makeDefinition,pruneDefinitions,deleteDefinition,validate,bitArray};
+  return {clone,spec,size,ports,key,anchor,points,project,distance,nets,simulate,makeDefinition,pruneDefinitions,deleteDefinition,validate,bitArray};
 });
