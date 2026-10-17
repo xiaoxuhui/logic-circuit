@@ -11,8 +11,9 @@
     const defs=source.definitions,leaves=[],frames=[],layouts=[];let total=0,netCounter=0;
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
       if(depth>12)throw Error('展开层数超过限制');
-      const sim=C.simulate(local,overrides),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
+      const net=C.nets(local),sim=C.simulate(local,overrides),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
+        if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
         if(++total>5000)throw Error('展开后的元件过多，请先减少电路规模');
         const s=C.spec(n,defs),label=(n.type==='input'?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.type==='custom'?defs[n.def].name:names[n.type]));
         if(n.type==='custom'){
@@ -33,7 +34,7 @@
         const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}"><title>${esc(label)}</title><rect width="${z.w}" height="${z.h}" rx="8"/><text class="expanded-title" x="76" y="20" text-anchor="middle">${esc(label.length>12?label.slice(0,11)+'…':label)}</text><text class="expanded-glyph" x="76" y="${z.h/2+18}" text-anchor="middle">${esc(glyph)}</text>${ports.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g>`;
         items.set(n.id,{n,label,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
       }
-      const net=C.nets(local),groups=[...net.groups.values()],columns=new Map(),top=65+groups.length*24;
+      const groups=[...net.groups.values()],columns=new Map(),top=65+groups.length*24;
       for(const item of items.values()){const key=boundary&&item.n.type==='input'?-Infinity:boundary&&item.n.type==='output'?Infinity:item.n.x;if(!columns.has(key))columns.set(key,[]);columns.get(key).push(item);}
       let x=0,height=top+80;
       for(const key of [...columns.keys()].sort((a,b)=>a-b)){
