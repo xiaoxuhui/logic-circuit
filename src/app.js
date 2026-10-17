@@ -32,7 +32,7 @@
     const minX=Math.min(...boxes.map(b=>b.x),...ps.map(p=>p.x)),maxX=Math.max(...boxes.map(b=>b.x+b.w),...ps.map(p=>p.x));
     const minY=Math.min(...boxes.map(b=>b.y),...ps.map(p=>p.y)),maxY=Math.max(...boxes.map(b=>b.y+b.h),...ps.map(p=>p.y));
     const scale=initialView?Math.min(1,svg.clientWidth/320):Math.max(.2,Math.min(1.25,(svg.clientWidth-90)/(maxX-minX||1),(svg.clientHeight-190)/(maxY-minY||1)));
-    camera={x:svg.clientWidth*(initialView&&svg.clientWidth>500?.68:.5)-(minX+maxX)/2*scale,y:svg.clientHeight*(initialView?.34:.49)-(minY+maxY)/2*scale,scale};setCamera();save();
+    camera={x:svg.clientWidth*(initialView&&svg.clientWidth>500?.68:.5)-(minX+maxX)/2*scale,y:svg.clientHeight*(initialView?.34:.49)-(minY+maxY)/2*scale,scale};setCamera();if(selected)renderInspector();save();
   }
   function signalClass(bits){return bits?.includes(null)?'unknown':bits?.some(x=>x===1)?'high':'low';}
   function signalText(bits){return !bits?'?':bits.length===1?(bits[0]??'?'):bits.slice().reverse().map(x=>x??'?').join('');}
@@ -62,6 +62,11 @@
     if($('prop-bits'))$('prop-bits').onchange=e=>{const b=Number(e.target.value);change(()=>{n.bits=b;n.value=(n.value||0)%(2**b);state.wires=state.wires.filter(w=>[w.a,w.b].every(e=>e.node!==n.id||C.ports(n,state.definitions).some(p=>p.dir===e.dir&&p.port===e.port)));});toast('位宽已更新；请检查相连导线的位宽。');};
     if($('prop-toggle'))$('prop-toggle').onclick=()=>toggle(n.id);
     if($('prop-value'))$('prop-value').onchange=e=>{const v=Number(e.target.value);if(!Number.isInteger(v)||v<0||v>=2**bits){toast('输入值必须为 0–'+(2**bits-1)+' 的整数');renderInspector();return;}change(()=>n.value=v);};
+    if(window.innerWidth<=980){
+      const panel=document.querySelector('.inspector'),close=document.createElement('button');close.className='inspector-close';close.textContent='×';close.title='关闭属性';close.onclick=()=>{selected=null;render();};panel.prepend(close);panel.querySelectorAll('.inspector-close').forEach((b,i)=>{if(i)b.remove();});
+      const r=panel.getBoundingClientRect(),b=svg.getBoundingClientRect(),z=C.size(n,state.definitions),left=b.x+camera.x+n.x*camera.scale,top=b.y+camera.y+n.y*camera.scale;
+      if(left+z.w*camera.scale>r.left-12&&left<r.right&&top+z.h*camera.scale>r.top-15&&top<r.bottom){camera.y-=Math.min(top+z.h*camera.scale-r.top+20,Math.max(0,top-b.top-110));setCamera();}
+    }
   }
   function renderLibrary(){
     const ids=Object.keys(state.definitions);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
