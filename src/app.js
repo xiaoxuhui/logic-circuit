@@ -37,6 +37,8 @@
   }
   function signalClass(bits){return bits?.includes(null)?'unknown':bits?.some(x=>x===1)?'high':'low';}
   function signalText(bits){return !bits?'?':bits.length===1?(bits[0]??'?'):bits.slice().reverse().map(x=>x??'?').join('');}
+  const binary=n=>(n.value||0).toString(2).padStart(n.bits||1,'0');
+  const decimal=bits=>!bits||bits.includes(null)?'?':bits.reduce((value,bit,i)=>value+bit*2**i,0);
   const path=ps=>ps.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
   function renderWires(){
     $('wire-layer').innerHTML=state.wires.map(w=>{const ps=C.points(w,state),bits=sim.wires[w.id],isBus=bits.length>1,mid=ps[Math.floor(ps.length/2)];return `<g class="wire ${selected?.id===w.id?'selected':''}" data-wire="${w.id}"><path class="wire-hit" d="${path(ps)}"/><path class="wire-line ${signalClass(bits)} ${isBus?'bus':''}" d="${path(ps)}"/>${isBus?`<text class="bus-label" x="${mid.x+8}" y="${mid.y-9}">${bits.length}b · ${signalText(bits)}</text>`:''}${[w.a,w.b].filter(e=>!e.node).map(e=>`<circle class="junction" cx="${e.x}" cy="${e.y}" r="3.3"/>`).join('')}</g>`;}).join('');
@@ -45,8 +47,8 @@
     $('node-layer').innerHTML=state.nodes.map(n=>{const z=C.size(n,state.definitions),ps=C.ports(n,state.definitions),value=n.type==='input'?C.bitArray(n.value||0,n.bits||1):sim.outputs[n.id];const t=title(n),short=t.length>12?t.slice(0,11)+'…':t;
       let symbol='';
       if(n.type==='nand')symbol='<text class="node-glyph" x="76" y="66" text-anchor="middle">⊼</text>';
-      else if(n.type==='input')symbol=`<g class="toggle ${signalClass(value)}" data-toggle="${n.id}" role="button" tabindex="0" aria-label="切换${escape(t)}" aria-pressed="${!!n.value}"><rect x="51" y="32" width="50" height="32" rx="6"/><text x="76" y="54" text-anchor="middle">${(n.bits||1)>1?n.value||0:signalText(value)}</text></g>`;
-      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':signalClass(value)==='unknown'?'#b7a17a':'#7793a8';symbol=`<circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="${value.length>4?9:13}">${value.length>1&&value.every(x=>x!==null)?value.reduce((v,b,i)=>v+b*2**i,0):signalText(value)}</text>`;}
+      else if(n.type==='input')symbol=(n.bits||1)>1?`<foreignObject x="33" y="33" width="86" height="32"><input xmlns="http://www.w3.org/1999/xhtml" class="binary-input" data-binary="${n.id}" type="text" inputmode="numeric" pattern="[01]{1,${n.bits}}" maxlength="${n.bits}" value="${binary(n)}" aria-label="${escape(t)} ${n.bits}位二进制输入" title="输入 ${n.bits} 位 0/1，按 Enter 确认" autocomplete="off" spellcheck="false"/></foreignObject>`:`<g class="toggle ${signalClass(value)}" data-toggle="${n.id}" role="button" tabindex="0" aria-label="切换${escape(t)}" aria-pressed="${!!n.value}"><rect x="51" y="32" width="50" height="32" rx="6"/><text x="76" y="54" text-anchor="middle">${signalText(value)}</text></g>`;
+      else if(n.type==='output'){const color=signalClass(value)==='high'?'#91e6be':signalClass(value)==='unknown'?'#b7a17a':'#7793a8';symbol=value.length>1?`<g class="numeric-display"><rect x="39" y="32" width="74" height="34" rx="4" fill="#0d1c24" stroke="#496675"/><text x="76" y="55" text-anchor="middle" fill="${color}" font-family="monospace" font-size="21">${decimal(value)}</text><text x="76" y="${z.h+27}" text-anchor="middle" fill="#7494a5" font-size="7">DEC · ${value.length} BIT</text></g>`:`<g class="single-indicator"><circle cx="76" cy="49" r="15" fill="${color}18" stroke="${color}"/><text x="76" y="54" text-anchor="middle" fill="${color}" font-family="monospace" font-size="13">${signalText(value)}</text></g>`;}
       else if(n.type==='custom')symbol=`<text x="76" y="${z.h/2+10}" text-anchor="middle" fill="#bca6dd" font-size="23">◇</text>`;
       else symbol=`<path d="M 65 38 L ${n.type==='hub'?87:65} ${z.h/2} L ${n.type==='hub'?65:87} ${z.h-20}" fill="none" stroke="#7dabc4" stroke-width="2"/>`;
       return `<g class="node ${selected?.id===n.id?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="76" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':signalClass(bits)==='unknown'?'#b7a17a':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="76" y="${z.h+15}" text-anchor="middle">${escape(n.type==='custom'?'CUSTOM GATE':subtitles[n.type])}</text></g>`;
@@ -59,10 +61,12 @@
     $('selection-status').textContent=title(n)+' · X '+Math.round(n.x)+' / Y '+Math.round(n.y);
     const canBits=['input','output','hub','splitter'].includes(n.type),bits=n.bits||1;
     $('selection-panel').innerHTML=`<div class="selection-eyebrow">已选中元件</div><div class="selected-name">${escape(title(n))}<span class="micro">${escape(subtitles[n.type]||'CUSTOM')}</span></div><div class="selection-description">${desc[n.type]}</div><label class="property-row">名称<input id="prop-name" maxlength="24" value="${escape(n.label||'')}" placeholder="${escape(names[n.type]||title(n))}"></label>${canBits?`<label class="property-row">位宽<select id="prop-bits">${Array.from({length:['hub','splitter'].includes(n.type)?7:8},(_,i)=>i+(['hub','splitter'].includes(n.type)?2:1)).map(i=>`<option value="${i}" ${bits===i?'selected':''}>${i} 位</option>`).join('')}</select></label>`:''}${n.type==='input'?`<div class="property-row">输入值 ${bits===1?`<button id="prop-toggle" class="signal-switch ${n.value?'on':''}">${n.value||0} ⇄</button>`:`<input id="prop-value" type="number" min="0" max="${2**bits-1}" value="${n.value||0}">`}</div>`:''}<div style="margin-top:15px">${C.ports(n,state.definitions).map(p=>`<div class="port-reading"><span>${p.dir==='in'?'输入':'输出'} ${escape(p.label)} · ${p.width} 位</span><code>${signalText(sim.portValues[C.key(p)])}</code></div>`).join('')}</div>`;
+    if(n.type==='input'&&bits>1){const field=$('prop-value');field.type='text';field.inputMode='numeric';field.maxLength=bits;field.pattern='[01]{1,'+bits+'}';field.value=binary(n);field.setAttribute('aria-label',bits+'位二进制输入');field.title='只输入 0 和 1，按 Enter 确认';field.closest('.property-row').firstChild.textContent='二进制值 ';}
+    if(n.type==='output'&&bits>1){const row=document.createElement('div');row.className='property-row';row.innerHTML='<span>十进制值</span><code class="decimal-value">'+decimal(sim.outputs[n.id])+'</code>';$('selection-panel').append(row);}
     $('prop-name').onchange=e=>change(()=>n.label=e.target.value.trim());
     if($('prop-bits'))$('prop-bits').onchange=e=>{const b=Number(e.target.value);change(()=>{n.bits=b;n.value=(n.value||0)%(2**b);state.wires=state.wires.filter(w=>[w.a,w.b].every(e=>e.node!==n.id||C.ports(n,state.definitions).some(p=>p.dir===e.dir&&p.port===e.port)));});toast('位宽已更新；请检查相连导线的位宽。');};
     if($('prop-toggle'))$('prop-toggle').onclick=()=>toggle(n.id);
-    if($('prop-value'))$('prop-value').onchange=e=>{const v=Number(e.target.value);if(!Number.isInteger(v)||v<0||v>=2**bits){toast('输入值必须为 0–'+(2**bits-1)+' 的整数');renderInspector();return;}change(()=>n.value=v);};
+    if($('prop-value')){$('prop-value').onchange=e=>commitBinary(n,e.target);$('prop-value').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();e.target.blur();}};}
     if(window.innerWidth<=980){
       const panel=document.querySelector('.inspector'),close=document.createElement('button');close.className='inspector-close';close.textContent='×';close.title='关闭属性';close.onclick=()=>{selected=null;render();};panel.prepend(close);panel.querySelectorAll('.inspector-close').forEach((b,i)=>{if(i)b.remove();});
       const r=panel.getBoundingClientRect(),b=svg.getBoundingClientRect(),z=C.size(n,state.definitions),left=b.x+camera.x+n.x*camera.scale,top=b.y+camera.y+n.y*camera.scale;
@@ -104,6 +108,7 @@
   document.addEventListener('pointerup',e=>endPlacement(e));document.addEventListener('pointercancel',e=>endPlacement(e,true));
   document.addEventListener('lostpointercapture',e=>{if(placement&&e.pointerId===placement.pointerId)endPlacement(e,true);});
   function toggle(id){const n=state.nodes.find(n=>n.id===id);if(!n)return;change(()=>{n.value=((n.value||0)+1)%(2**(n.bits||1));selected={type:'node',id};});}
+  function commitBinary(n,field){const value=field.value.trim(),bits=n.bits||1;if(!/^[01]+$/.test(value)||value.length>bits){toast('请输入 1–'+bits+' 位二进制，只能包含 0 和 1');field.value=binary(n);return;}change(()=>{n.value=parseInt(value,2);selected={type:'node',id:n.id};});}
   function remove(){if(!selected)return;change(()=>{if(selected.type==='node'){state.nodes=state.nodes.filter(n=>n.id!==selected.id);state.wires=state.wires.filter(w=>w.a.node!==selected.id&&w.b.node!==selected.id);}else state.wires=state.wires.filter(w=>w.id!==selected.id);selected=null;});}
   function endpoint(p){return p.node?{node:p.node,dir:p.dir,port:p.port}:{x:p.x,y:p.y};}
   function snap(p){
@@ -119,6 +124,7 @@
     if(![0,1,2].includes(e.button)||gesture||placement)return;
     const p=worldPoint(e),nodeEl=e.target.closest('[data-node]'),port=e.target.closest('[data-port]'),wire=e.target.closest('[data-wire]'),toggleEl=e.target.closest('[data-toggle]');
     if(e.button===2||e.button===1||space||mode==='pan'){gesture={type:'pan',start:localPoint(e),camera:{...camera}};svg.classList.add('dragging');}
+    else if(e.target.matches('input'))return;
     else if(toggleEl)return;
     else if(port){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node),q=C.ports(n,state.definitions).find(q=>q.dir===port.dataset.dir&&q.port===Number(port.dataset.port));gesture={type:'wire',start:q,a:endpoint(q),current:q,moved:false};}
     else if(nodeEl){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node);selected={type:'node',id:n.id};gesture={type:'node',id:n.id,start:p,x:n.x,y:n.y,before:snapshot(),moved:false};render();}
@@ -140,6 +146,8 @@
     else {selected=g.wire?{type:'wire',id:g.wire}:null;renderInspector();$('delete').disabled=!selected;}
   }
   svg.addEventListener('pointerup',e=>finish(e));svg.addEventListener('pointercancel',e=>finish(e,true));
+  svg.addEventListener('change',e=>{const id=e.target.dataset.binary;if(id){const n=state.nodes.find(n=>n.id===id);if(n)commitBinary(n,e.target);}});
+  svg.addEventListener('keydown',e=>{if(e.target.dataset.binary&&e.key==='Enter'){e.preventDefault();e.target.blur();}});
   svg.addEventListener('click',e=>{const t=e.target.closest('[data-toggle]');if(t)toggle(t.dataset.toggle);});
   svg.addEventListener('keydown',e=>{const t=e.target.closest('[data-toggle]');if(t&&['Enter',' '].includes(e.key)){e.preventDefault();toggle(t.dataset.toggle);}});
   svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e));},{passive:false});
