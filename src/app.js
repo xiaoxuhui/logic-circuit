@@ -176,10 +176,10 @@
   // compatibility clicks after a captured SVG drag. Guard the later native
   // click so that a single tap never invokes a control twice.
   let touchButton=null,lastTouch=null;
-  document.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'){const button=e.target.closest('button');touchButton=button?{button,x:e.clientX,y:e.clientY,id:e.pointerId}:null;}},true);
+  document.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'){const button=e.target.closest('button,[data-toggle]');touchButton=button?{button,x:e.clientX,y:e.clientY,id:e.pointerId}:null;}},true);
   document.addEventListener('pointercancel',()=>{touchButton=null;},true);
-  document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now()};e.preventDefault();t.button.click();},true);
-  document.addEventListener('click',e=>{if(e.isTrusted&&lastTouch&&Date.now()-lastTouch.time<700&&e.target.closest('button')===lastTouch.button){e.preventDefault();e.stopImmediatePropagation();}},true);
+  document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button,[data-toggle]')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now()};e.preventDefault();if(t.button.dataset.toggle)toggle(t.button.dataset.toggle);else t.button.click();},true);
+  document.addEventListener('click',e=>{if(e.isTrusted&&lastTouch&&Date.now()-lastTouch.time<700&&e.target.closest('button,[data-toggle]')===lastTouch.button){e.preventDefault();e.stopImmediatePropagation();}},true);
   let restored=false;
   try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){state=C.validate(JSON.parse(raw));if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次的存档无法读取，已打开新画布。');}
   render();if(!restored)fit(true);
