@@ -1,0 +1,49 @@
+# 逻辑工坊 · NAND LAB
+
+v0.1.0。只有与非门的数字电路沙盒：在无限画布布线，把自己的电路封装为可重复使用的逻辑门。
+
+## 开始
+
+无需安装依赖，直接用浏览器打开 `dist/index.html` 或根目录 `index.html`。推荐通过本地服务使用，以获得稳定的浏览器自动保存：
+
+```powershell
+node scripts/build.cjs
+node scripts/serve.cjs
+```
+
+访问 http://127.0.0.1:4196 。端口可用 `PORT` 环境变量覆盖。
+
+## 操作
+
+- 点击元件库添加元件。初始画布只有一个 NAND。
+- 左键拖动门体移动；从空白或端口拖动布线，松开完成。
+- 端点吸附到端口或导线时连接。线与线单纯交叉时不连接；输出支持多路扇出。
+- 按住空格拖动/中键拖动平移；滚轮缩放。触屏使用“移动”和缩放按钮。
+- 点击输入开关切换信号；选中元件可重命名或设置位宽。
+- 集线器/分线器支持 2–8 位，顶部 b0 为最低位；多位输入支持数值编辑。
+- 用输入和输出元件标明边界，点击“封装为逻辑门”，从左侧再次放置。端口按边界元件由上到下、由左到右排序。可嵌套复用。
+- Delete 删除选中元件/导线，Ctrl+Z 撤销，Ctrl+Shift+Z 或 Ctrl+Y 重做；Esc 取消绘制或选择。
+- 自动保存在当前浏览器；导出/导入 JSON 包含电路、自定义门与视角。导入和新建均可撤销。
+
+薄荷绿为高电平 1，蓝灰为低电平 0，琥珀虚线为未知。未接通、多个输出接在一起、位宽不一致会产生未知或提示。本版本用于组合逻辑；不提供时钟与触发器，反馈回路不擅自初始化为某个稳定值。
+
+## 验证
+
+```powershell
+node --test tests/core.test.cjs
+node scripts/build.cjs
+node tests/browser.cjs
+```
+
+核心测试无外部依赖。浏览器测试需要 Playwright 和对应的 Chromium；会自动使用 Codex bundled runtime 中的 Playwright。Windows 若缓存路径在用户目录，可设置：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH="$env:LOCALAPPDATA\ms-playwright"
+node tests/browser.cjs
+```
+
+支持 npm 的环境也可使用 `npm test`、`npm run build`、`npm run test:browser`、`npm start`。
+
+源代码：`src/core.js` 为纯电路模型，`src/app.js` 为画布与交互。测试证据见 `doc/第一版本测试报告.md`。
+
+当前单画布最多 500 个元件、1500 根导线，支持 80 个自定义门、12 层嵌套；导入限制 2MB，以控制浏览器资源使用。画布可自由向任意方向平移。
