@@ -147,6 +147,14 @@
   $('export').onclick=()=>{const blob=new Blob([JSON.stringify({...snapshot(),camera},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='逻辑工坊-电路.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('电路与自定义门已导出');};
   $('import').onclick=()=>$('file-input').click();
   $('file-input').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>2*1024*1024)throw Error('文件过大，请选择 2MB 以内的电路文件');const next=C.validate(JSON.parse(await f.text()));change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('电路已导入，可以撤销恢复');}catch(error){toast(error instanceof SyntaxError?'文件不是有效 JSON':error.message);}e.target.value='';};
+  // Activate touch controls directly on release. Some mobile browsers suppress
+  // compatibility clicks after a captured SVG drag. Guard the later native
+  // click so that a single tap never invokes a control twice.
+  let touchButton=null,lastTouch=null;
+  document.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'){const button=e.target.closest('button');touchButton=button?{button,x:e.clientX,y:e.clientY,id:e.pointerId}:null;}},true);
+  document.addEventListener('pointercancel',()=>{touchButton=null;},true);
+  document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now()};e.preventDefault();t.button.click();},true);
+  document.addEventListener('click',e=>{if(e.isTrusted&&lastTouch&&Date.now()-lastTouch.time<700&&e.target.closest('button')===lastTouch.button){e.preventDefault();e.stopImmediatePropagation();}},true);
   let restored=false;
   try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){state=C.validate(JSON.parse(raw));if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次的存档无法读取，已打开新画布。');}
   render();if(!restored)fit(true);
