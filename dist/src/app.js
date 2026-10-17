@@ -14,7 +14,7 @@
   const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions});
   function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
   function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...snapshot(),camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
-  function commit(before){if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}render();save();}
+  function commit(before){state.definitions=C.pruneDefinitions(state);if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}render();save();}
   function change(fn){const before=snapshot();fn();commit(before);}
   function restore(s){state=C.clone(s);selected=null;render();save();}
   function undo(){if(!past.length)return;future.push(snapshot());restore(past.pop());}
@@ -74,9 +74,12 @@
     }
   }
   function renderLibrary(){
-    const ids=Object.keys(state.definitions);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
-    $('custom-library').innerHTML=ids.map(id=>{const d=state.definitions[id];return `<button class="component" data-custom="${id}" title="${escape(d.name)}"><span class="component-symbol" style="color:#bca6dd">◇</span><span><b>${escape(d.name)}</b><small>${d.inputs.length} 输入 / ${d.outputs.length} 输出</small></span><span class="plus">+</span></button>`;}).join('');
+    const ids=Object.keys(state.definitions).filter(id=>!state.definitions[id].hidden);$('custom-count').textContent=String(ids.length).padStart(2,'0');$('custom-empty').style.display=ids.length?'none':'';
+    $('custom-library').innerHTML=ids.map(id=>{const d=state.definitions[id];return `<div class="custom-entry"><button class="component" data-custom="${id}" title="拖出 ${escape(d.name)}；右键从元件库删除"><span class="component-symbol" style="color:#bca6dd">◇</span><span><b>${escape(d.name)}</b><small>${d.inputs.length} 输入 / ${d.outputs.length} 输出</small></span></button><button class="delete-custom" data-delete-custom="${id}" title="删除 ${escape(d.name)}" aria-label="删除保存的逻辑门 ${escape(d.name)}"><span aria-hidden="true">×</span><span class="mobile-delete-label">删除</span></button></div>`;}).join('');
   }
+  function deleteSavedGate(id){if(placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
+  $('custom-library').addEventListener('click',e=>{const b=e.target.closest('[data-delete-custom]');if(b){e.stopPropagation();deleteSavedGate(b.dataset.deleteCustom);}});
+  $('custom-library').addEventListener('contextmenu',e=>{const b=e.target.closest('[data-custom],[data-delete-custom]');if(b){e.preventDefault();deleteSavedGate(b.dataset.custom||b.dataset.deleteCustom);}});
   function render(){
     sim=C.simulate(state);renderWires();renderNodes();renderInspector();renderLibrary();setCamera();
     $('undo').disabled=!past.length;$('redo').disabled=!future.length;$('delete').disabled=!selected;
@@ -181,8 +184,8 @@
   let touchButton=null,lastTouch=null;
   document.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'){const button=e.target.closest('button,[data-toggle]');touchButton=button?{button,x:e.clientX,y:e.clientY,id:e.pointerId}:null;}},true);
   document.addEventListener('pointercancel',()=>{touchButton=null;},true);
-  document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button,[data-toggle]')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now()};e.preventDefault();if(t.button.dataset.toggle)toggle(t.button.dataset.toggle);else t.button.click();},true);
-  document.addEventListener('click',e=>{if(e.isTrusted&&lastTouch&&Date.now()-lastTouch.time<700&&e.target.closest('button,[data-toggle]')===lastTouch.button){e.preventDefault();e.stopImmediatePropagation();}},true);
+  document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button,[data-toggle]')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now(),x:e.clientX,y:e.clientY};e.preventDefault();if(t.button.dataset.toggle)toggle(t.button.dataset.toggle);else t.button.click();},true);
+  document.addEventListener('click',e=>{if(!e.isTrusted||!lastTouch||Date.now()-lastTouch.time>=700)return;const sameButton=e.target.closest('button,[data-toggle]')===lastTouch.button,deletedRowClick=lastTouch.button.dataset.deleteCustom&&(e.pointerType==='touch'||e.sourceCapabilities?.firesTouchEvents)&&Math.hypot(e.clientX-lastTouch.x,e.clientY-lastTouch.y)<=12;if(sameButton||deletedRowClick){e.preventDefault();e.stopImmediatePropagation();}},true);
   let restored=false;
   try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){state=C.validate(JSON.parse(raw));if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次的存档无法读取，已打开新画布。');}
   render();if(!restored)fit(true);

@@ -76,6 +76,17 @@
     if(inputs.length>16||outputs.length>16)throw Error('封装最多支持 16 个输入和 16 个输出');
     return {name,inputs,outputs,nodes:clone(state.nodes),wires:clone(state.wires)};
   }
+  function pruneDefinitions(state){
+    const defs=state.definitions,keep=new Set();
+    function visit(id){if(keep.has(id))return;if(!Object.hasOwn(defs,id))throw Error('自定义门不存在');keep.add(id);for(const n of defs[id].nodes)if(n.type==='custom')visit(n.def);}
+    for(const id of Object.keys(defs))if(!defs[id].hidden)visit(id);
+    for(const n of state.nodes)if(n.type==='custom')visit(n.def);
+    return Object.fromEntries(Object.entries(defs).filter(([id])=>keep.has(id)));
+  }
+  function deleteDefinition(state,id){
+    if(!Object.hasOwn(state.definitions,id))throw Error('自定义门不存在');
+    const next=clone(state);next.definitions[id].hidden=true;next.definitions=pruneDefinitions(next);return next;
+  }
   function validate(raw){
     const fail=()=>{throw Error('电路文件无效或不兼容，请检查格式、端口和自定义门');};
     if(!raw||raw.version!==1||!Array.isArray(raw.nodes)||!Array.isArray(raw.wires)||!raw.definitions||typeof raw.definitions!=='object'||Array.isArray(raw.definitions))fail();
@@ -89,11 +100,11 @@
       for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>8))fail();if(['hub','splitter'].includes(n.type)&&width(n)<2)fail();if(n.value!==undefined&&(!Number.isInteger(n.value)||n.value<0||n.value>=2**width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
       for(const w of s.wires){if(!w||!safeId(w.id)||wireIds.has(w.id))fail();wireIds.add(w.id);for(const e of [w.a,w.b]){if(!e||typeof e!=='object')fail();if(e.node){if(!nodeIds.has(e.node)||!['in','out'].includes(e.dir)||!Number.isInteger(e.port)||e.port<0)fail();const n=s.nodes.find(n=>n.id===e.node);let ps;try{ps=spec(n,defs);}catch{fail();}if(e.port>=ps[e.dir==='in'?'inputs':'outputs'].length)fail();}else if(!finite(e.x)||!finite(e.y))fail();}if(w.via!==undefined&&(!Array.isArray(w.via)||w.via.length>100||w.via.some(p=>!finite(p.x)||!finite(p.y))))fail();}
     }
-    for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(!ps.length||ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
+    for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(!ps.length||ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
     let total=raw.nodes.length;for(const id of ids){circuit(defs[id]);total+=defs[id].nodes.length;}if(total>5000)fail();circuit(raw);
     const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>12||cost>5000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>5000)fail();
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,size,ports,key,anchor,points,project,distance,simulate,makeDefinition,validate,bitArray};
+  return {clone,spec,size,ports,key,anchor,points,project,distance,simulate,makeDefinition,pruneDefinitions,deleteDefinition,validate,bitArray};
 });
