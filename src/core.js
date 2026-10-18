@@ -263,6 +263,29 @@
       if(exact.has(path))return false;for(let i=path.indexOf('/',5);i>=0;i=path.indexOf('/',i+1))if(subtrees.has(path.slice(0,i)))return false;return true;
     }));
   }
+  function delayTarget(state,path){
+    const parts=String(path).split('/');if(parts.shift()!=='root'||parts.some(p=>!p))throw Error('延迟线实例路径无效');
+    let nodes=state.nodes,node=null;const names=[];
+    for(let i=0;i<parts.length;i++){
+      node=nodes.find(n=>n.id===parts[i]);if(!node)throw Error('元件实例已不存在');
+      names.push(node.label||(node.type==='custom'?state.definitions[node.def]?.name:node.type==='delay'?'延迟线':'元件'));
+      if(i<parts.length-1){if(node.type!=='custom'||!state.definitions[node.def])throw Error('延迟线实例路径无效');nodes=state.definitions[node.def].nodes;}
+    }
+    return {node,names};
+  }
+  function delayRegisters(state,scope='root',offset=0,limit=50){
+    if(!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>200)throw Error('分页参数无效');
+    const defs=state.definitions||{},memo=new Map(),visiting=new Set(),items=[];let skip=offset;
+    function countNode(n){if(n.type==='delay')return 1;if(n.type!=='custom')return 0;if(memo.has(n.def))return memo.get(n.def);if(visiting.has(n.def))throw Error('自定义门循环依赖');const d=defs[n.def];if(!d)throw Error('自定义门不存在');visiting.add(n.def);const count=d.nodes.reduce((sum,n)=>sum+countNode(n),0);visiting.delete(n.def);memo.set(n.def,count);return count;}
+    function visit(n,path,names){const count=countNode(n);if(!count||items.length>=limit)return;if(skip>=count){skip-=count;return;}if(n.type==='delay'){const bits=width(n);items.push({path,label:names.join(' / '),width:bits,value:packBits(bitArray(state.delayState?.[path]||0,bits))});}else for(const child of defs[n.def].nodes){visit(child,path+'/'+child.id,[...names,child.label||(child.type==='custom'?defs[child.def]?.name:child.type==='delay'?'延迟线':'元件')]);if(items.length>=limit)break;}}
+    if(scope==='root'){const total=state.nodes.reduce((sum,n)=>sum+countNode(n),0);for(const n of state.nodes){visit(n,'root/'+n.id,[n.label||(n.type==='custom'?defs[n.def]?.name:'延迟线')]);if(items.length>=limit)break;}return {total,items};}
+    const {node,names}=delayTarget(state,scope),total=countNode(node);visit(node,scope,names);return {total,items};
+  }
+  function setDelayValue(state,path,bits){
+    const {node}=delayTarget(state,path);if(node?.type!=='delay'||!Array.isArray(bits)||bits.length!==width(node)||bits.some(bit=>bit!==0&&bit!==1))throw Error('延迟线数值或位宽无效');
+    if(path.length>1200||!Object.hasOwn(state.delayState||{},path)&&Object.keys(state.delayState||{}).length>=5000)throw Error('延迟状态超过存档限制');
+    return {...state.delayState,[path]:packBits(bits)};
+  }
   function countComponents(state){
     // Cache one definition's composition, then add it again for EVERY placed instance.
     const memo=new Map(),visiting=new Set(),defs=state.definitions||{};
@@ -354,5 +377,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,resetDelays,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
