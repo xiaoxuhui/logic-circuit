@@ -7,10 +7,43 @@
   const color=bits=>bits.some(b=>b===1)?'#91e6be':'#7793a8';
   const path=points=>points.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
   const stroke=(points,bits)=>`<path class="expanded-wire wire-line ${bits.some(b=>b===1)?'high':''} ${bits.length>1?'bus':''}" d="${path(points)}" stroke="${color(bits)}" stroke-width="${bits.length>1?4:2}"/>`;
+  const MAX_CACHE_BYTES=8*1024*1024,MAX_CACHE_ENTRIES=128,templates=new Map(),structures=new Map();
+  let templateBytes=0,structureBytes=0,structureId=0,lastStats={hits:0,misses:0,circuitsBuilt:0,evictions:0};
+  function internStructure(key){
+    if(structures.has(key)){const id=structures.get(key);structures.delete(key);structures.set(key,id);return id;}
+    const id=++structureId,bytes=key.length*2;if(bytes>MAX_CACHE_BYTES)return id;
+    while(structures.size>=256||structureBytes+bytes>MAX_CACHE_BYTES){const first=structures.keys().next().value;structureBytes-=first.length*2;structures.delete(first);}
+    structures.set(key,id);structureBytes+=bytes;return id;
+  }
+  const moveScope=(scope,from,to)=>scope===from?to:scope.startsWith(from+'/')?to+scope.slice(from.length):scope;
+  function rebase(view,from,to){
+    const result=C.clone(view),netId=id=>id.replace(/^(net|link)-([^:]+):(\d+)$/,(_,kind,scope,index)=>kind+'-'+encodeURIComponent(moveScope(decodeURIComponent(scope),from,to))+':'+index);
+    if(from===to)return result;
+    result.svg=result.svg.replace(/data-expanded-scope="([^"]*)"/g,(_,scope)=>'data-expanded-scope="'+esc(moveScope(scope,from,to))+'"').replace(/data-expanded-net="([^"]*)"/g,(_,id)=>'data-expanded-net="'+netId(id)+'"');
+    for(const item of [...result.leaves,...result.frames,...result.layouts])item.scope=moveScope(item.scope,from,to);
+    for(const layout of result.layouts)for(const route of layout.routes){route.scope=moveScope(route.scope,from,to);route.id=netId(route.id);}
+    return result;
+  }
+  function cacheView(key,view,scope,stats){
+    const template=rebase(view,scope,'root'),bytes=2*(key.length+JSON.stringify(template).length);if(bytes>MAX_CACHE_BYTES)return;
+    while(templates.size>=MAX_CACHE_ENTRIES||templateBytes+bytes>MAX_CACHE_BYTES){const first=templates.keys().next().value;templateBytes-=templates.get(first).bytes;templates.delete(first);stats.evictions++;}
+    templates.set(key,{view:template,bytes});templateBytes+=bytes;
+  }
+  function getCacheStats(){return {...lastStats,entries:templates.size,bytes:templateBytes,structureBytes,maxEntries:MAX_CACHE_ENTRIES,maxBytes:MAX_CACHE_BYTES};}
+  function clearCache(){templates.clear();structures.clear();templateBytes=structureBytes=0;lastStats={hits:0,misses:0,circuitsBuilt:0,evictions:0};}
   function build(source,options={}){
-    const defs=source.definitions,leaves=[],frames=[],layouts=[];let total=0,netCounter=0;
+    const defs=source.definitions,leaves=[],frames=[],layouts=[],stats={hits:0,misses:0,circuitsBuilt:0,evictions:0},definitionIds=new Map(),visiting=new Set(),memories=new Map(),forces=new Map();let total=0;lastStats=stats;
+    const structure=(local,ports)=>internStructure(JSON.stringify([local.nodes.map(n=>n.type==='input'?{...n,value:undefined}:n),local.wires,ports,local.nodes.filter(n=>n.type==='custom').map(n=>[n.def,definitionId(n.def)])]));
+    function definitionId(id){if(definitionIds.has(id))return definitionIds.get(id);if(visiting.has(id))throw Error('自定义门循环依赖');visiting.add(id);const d=defs[id];if(!d)throw Error('自定义门不存在');const result=structure(d,[d.name,d.inputs,d.outputs,d.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0])]);visiting.delete(id);definitionIds.set(id,result);return result;}
+    for(const [path,value] of Object.entries(source.delayState||{}).sort(([a],[b])=>a.localeCompare(b))){const parts=path.split('/');for(let i=1;i<parts.length;i++){const scope=parts.slice(0,i).join('/');if(!memories.has(scope))memories.set(scope,[]);memories.get(scope).push([path.slice(scope.length),value]);}}
+    for(const [path,value] of Object.entries(source.scopedWireOverrides||{}).sort(([a],[b])=>a.localeCompare(b))){const parts=path.split('/');for(let i=1;i<=parts.length;i++){const scope=parts.slice(0,i).join('/');if(!forces.has(scope))forces.set(scope,[]);forces.get(scope).push([path.slice(scope.length),Object.entries(value).sort(([a],[b])=>a.localeCompare(b))]);}}
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
       if(depth>C.MAX_DEPTH)throw Error('展开层数超过限制');
+      const startTotal=total,startLeaves=leaves.length,startFrames=frames.length,startLayouts=layouts.length;
+      const cacheKey=JSON.stringify([structure(local,boundaryPorts&&[boundaryPorts.name,boundaryPorts.inputs,boundaryPorts.outputs]),boundary,scope==='root',!!options.direct,!!options.readOnly,!!options.preserveLayout,options.debugNode,source.displayFormat||'unsigned',Object.entries(overrides).sort(([a],[b])=>a.localeCompare(b)),local.nodes.filter(n=>n.type==='input').map(n=>[n.id,overrides[n.id]===undefined?n.value||0:overrides[n.id]]),memories.get(scope)||[],forces.get(scope)||[],local.wireOverrides||{}]);
+      const cached=templates.get(cacheKey);
+      if(cached){if(depth+cached.view.depthSpan>C.MAX_DEPTH)throw Error('展开层数超过限制');if(total+cached.view.count>5000)throw Error('展开后的元件过多，请先减少电路规模');templates.delete(cacheKey);templates.set(cacheKey,cached);stats.hits++;const view=rebase(cached.view,'root',scope);total+=view.count;leaves.push(...view.leaves);frames.push(...view.frames);layouts.push(...view.layouts);return view;}
+      stats.misses++;stats.circuitsBuilt++;let netCounter=0,depthSpan=0;
       const net=C.nets(local),sim=C.simulate(local,overrides,depth,{memory:source.delayState||{},scope,scopedOverrides:source.scopedWireOverrides||{}}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
@@ -19,6 +52,7 @@
         if(n.type==='custom'&&!options.direct){
           const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=sim.portValues[C.key({node:n.id,dir:'in',port:i})]);
           const child=circuit({nodes:d.nodes,wires:d.wires,definitions:defs},input,true,depth+1,scope+'/'+n.id,d),pad=28+Math.max(d.inputs.length,d.outputs.length)*14,w=child.w+pad*2;
+          depthSpan=Math.max(depthSpan,child.depthSpan+1);
           const spread=(ports,points,x)=>{const used=[];return ports.map(p=>{let y=40+points[p.id].y;while(used.some(v=>Math.abs(v-y)<24))y+=24;used.push(y);return {x,y};});};
           const ins=spread(d.inputs,child.inputs,0),outs=spread(d.outputs,child.outputs,w),h=Math.max(child.h+64,...ins.map(p=>p.y+30),...outs.map(p=>p.y+30));
 
@@ -26,7 +60,7 @@
             let targetScope=scope,group=net.groups.get(net.portNet.get(C.key({node:n.id,dir,port:index})));
             if(!group){const port=d[dir==='in'?'inputs':'outputs'][index],inner={nodes:d.nodes,wires:d.wires,definitions:defs},innerNet=C.nets(inner),endpoint=C.ports(d.nodes.find(n=>n.id===port.id),defs)[0];group=innerNet.groups.get(innerNet.portNet.get(C.key(endpoint)));targetScope=scope+'/'+n.id;}
             if(!group)return '';
-            const id='link-'+(++netCounter),description='连接线 · '+bitText(bits);
+            const id='link-'+encodeURIComponent(scope)+':'+(++netCounter),description='连接线 · '+bitText(bits);
             return '<g class="expanded-net" data-expanded-net="'+id+'" data-expanded-scope="'+esc(targetScope)+'" data-expanded-wire="'+esc(group.wires[0])+'" data-description="'+esc(description)+'" role="button" tabindex="0"><path class="expanded-net-hit" d="'+path(ps)+'"/>'+stroke(ps,bits)+'</g>';
           };
           let links='';d.inputs.forEach((p,i)=>{const to={x:pad+child.inputs[p.id].x,y:40+child.inputs[p.id].y},lane=pad-14*(i+1);links+=link([ins[i],{x:lane,y:ins[i].y},{x:lane,y:to.y},to],input[p.id],'in',i);});d.outputs.forEach((p,i)=>{const from={x:pad+child.outputs[p.id].x,y:40+child.outputs[p.id].y},lane=w-pad+14*(i+1);links+=link([from,{x:lane,y:from.y},{x:lane,y:outs[i].y},outs[i]],sim.portValues[C.key({node:n.id,dir:'out',port:i})],'out',i);});
@@ -63,7 +97,7 @@
       }
       const width=Math.max(200,x),routes=[];let wiring='';
       for(const [index,group] of groups.entries()){
-        const id='net-'+(++netCounter),label='N'+netCounter,bits=sim.wires[group.wires[0]],laneY=35+index*24,paths=[],ports=[...group.ports.values()];
+        const id='net-'+encodeURIComponent(scope)+':'+(++netCounter),label='N'+netCounter,bits=sim.wires[group.wires[0]],laneY=35+index*24,paths=[],ports=[...group.ports.values()];
         const endpoints=ports.map(p=>{const item=items.get(p.node),point=(p.dir==='in'?item.ins:item.outs)[p.port];return {x:item.x+point.x,y:item.y+point.y,lane:(p.dir==='in'?item.inLanes:item.outLanes)[p.port]};});
         const endpointName=p=>{const item=items.get(p.node);return (item.label||item.n.label||(item.n.type==='custom'?defs[item.n.def].name:names[item.n.type]))+' '+(p.dir==='in'?'输入':'输出')+(p.port+1);};
         const description=label+' · '+ports.map(endpointName).join(' ↔ ')+' · 值 '+bitText(bits);
@@ -75,7 +109,8 @@
         routes.push({id,scope,wire:group.wires[0],ports:ports.map(p=>({node:p.node,dir:p.dir,port:p.port})),paths});
       }
       layouts.push({scope,boxes:[...items.values()].map(i=>({id:i.n.id,x:i.x,y:i.y,w:i.w,h:i.h})),routes});
-      return {w:width,h:height,inputs,outputs,svg:wiring+[...items.values()].map(item=>`<g ${scope==='root'&&item.n.id===options.debugNode?'class="debug-target"':''} transform="translate(${item.x} ${item.y})">${item.markup}</g>`).join('')};
+      const result={w:width,h:height,inputs,outputs,svg:wiring+[...items.values()].map(item=>`<g ${scope==='root'&&item.n.id===options.debugNode?'class="debug-target"':''} transform="translate(${item.x} ${item.y})">${item.markup}</g>`).join(''),count:total-startTotal,depthSpan};
+      cacheView(cacheKey,{...result,leaves:leaves.slice(startLeaves),frames:frames.slice(startFrames),layouts:layouts.slice(startLayouts)},scope,stats);return result;
     }
     const result=circuit(source,{},false,0,options.scope||'root');return {...result,leaves,frames,layouts};
   }
@@ -92,5 +127,5 @@
     const captured={nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat,scopedWireOverrides};
     return {...build(captured,{readOnly:true,direct:true,preserveLayout:true}),source:captured};
   }
-  return {build,focus};
+  return {build,focus,getCacheStats,clearCache};
 });
