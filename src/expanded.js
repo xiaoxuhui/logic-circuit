@@ -63,5 +63,14 @@
     }
     const result=circuit(source);return {...result,leaves,frames,layouts};
   }
-  return {build};
+  function focus(source,nodeId){
+    const node=source.nodes.find(n=>n.id===nodeId);
+    if(node?.type!=='custom')throw Error('请选择一个自定义逻辑门');
+    const definition=source.definitions[node.def],sim=C.simulate(source),nodes=C.clone(definition.nodes);
+    definition.inputs.forEach((port,i)=>{nodes.find(n=>n.id===port.id).value=C.packBits(sim.portValues[C.key({node:nodeId,dir:'in',port:i})]);});
+    const prefix='root/'+nodeId+'/',memory={};
+    for(const [path,value] of Object.entries(source.delayState||{}))if(path.startsWith(prefix))memory['root/'+path.slice(prefix.length)]=value;
+    return build({nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat},{readOnly:true});
+  }
+  return {build,focus};
 });
