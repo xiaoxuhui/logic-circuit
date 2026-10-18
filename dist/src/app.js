@@ -8,7 +8,7 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
-  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null;
+  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false;
   const pasteLayer=document.createElementNS('http://www.w3.org/2000/svg','g');pasteLayer.setAttribute('class','paste-preview');pasteLayer.setAttribute('data-paste-preview','');pasteLayer.style.display='none';$('world').append(pasteLayer);
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -18,24 +18,37 @@
   const backupKey='logic-workshop-refresh-backups-v1';
   const saveText=()=>unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera});
   function readBackups(){try{const items=JSON.parse(localStorage.getItem(backupKey)||'[]');return Array.isArray(items)?items.filter(item=>typeof item?.text==='string'&&typeof item.time==='string').slice(0,10):[];}catch{return [];}}
-  function backupText(text,reason){
+  function writeStored(key,text){try{localStorage.setItem(key,text);return localStorage.getItem(key)===text;}catch{return false;}}
+  function backupText(text,reason,recoverFrom){
     if(!text)return false;
-    try{let items=readBackups();if(items[0]?.text===text&&items[0].reason===reason)return true;items=[{time:new Date().toISOString(),reason,text},...items.filter(item=>item.text!==text)].slice(0,10);
-      while(items.length){try{localStorage.setItem(backupKey,JSON.stringify(items));return true;}catch{items.pop();}}
+    try{let items=readBackups();if(items[0]?.text===text&&items[0].reason===reason&&items[0].recoverFrom===recoverFrom)return true;items=[{time:new Date().toISOString(),reason,text,...(recoverFrom===undefined?{}:{recoverFrom})},...items.filter(item=>item.text!==text)].slice(0,10);
+      while(items.length){if(writeStored(backupKey,JSON.stringify(items)))return true;items.pop();}
     }catch{}return false;
   }
-  function preserveBeforeLeave(){clearTimeout(saveTimer);const text=saveText();backupText(text,'刷新或关闭前');if(unreadableSave===null)try{localStorage.setItem('logic-workshop-v1',text);}catch{}}
+  function checkpoint(reason){
+    clearTimeout(saveTimer);
+    try{
+      if(storageReadFailed)throw Error('原存档读取失败');
+      const text=saveText();let previous;try{previous=localStorage.getItem('logic-workshop-v1');}catch{}
+      const saved=unreadableSave===null?writeStored('logic-workshop-v1',text):previous===text;
+      const backed=backupText(text,saved?reason:'自动恢复备份',saved?undefined:previous);
+      $('save-status').textContent=saved?'已保存到此浏览器':backed?'主存档保存失败，已自动备份':'保存和备份失败，请先导出存档';
+      return saved||backed;
+    }catch{$('save-status').textContent='保存失败，请留在本页并导出存档';return false;}
+  }
+  function preserveBeforeLeave(e){if(checkpoint('刷新或关闭前'))return;if(e?.type==='beforeunload'){e.preventDefault();e.returnValue='';}toast('保存和备份未成功，请取消刷新，先全部导出存档');}
   window.addEventListener('beforeunload',preserveBeforeLeave);window.addEventListener('pagehide',preserveBeforeLeave);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')checkpoint('切换页面前');});
   function showBackups(){const items=readBackups();$('backup-list').innerHTML=items.length?items.map((item,i)=>{let detail='原始存档';try{const data=JSON.parse(item.text);detail=(data.nodes?.length||0)+' 个元件 · '+(data.wires?.length||0)+' 根导线 · '+Object.keys(data.definitions||{}).length+' 个自定义门';}catch{}return '<div class="backup-entry"><div><strong>'+escape(new Date(item.time).toLocaleString('zh-CN',{hour12:false}))+'</strong><small>'+escape(detail+' · '+item.reason)+'</small></div><button class="subtle" data-restore-backup="'+i+'">恢复</button></div>';}).join(''):'<p>还没有备份。刷新、关闭或删除时会自动备份。</p>';$('backup-error').textContent='';$('backup-dialog').showModal();}
   $('backups').onclick=showBackups;
   $('backup-list').onclick=e=>{const button=e.target.closest('[data-restore-backup]');if(!button)return;const item=readBackups()[Number(button.dataset.restoreBackup)];if(!item)return;try{C.validate(JSON.parse(item.text));backupText(saveText(),'恢复其他备份前');if(gesture||placement)throw Error('请先结束当前拖动操作');if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();}else while(expanded)returnToCircuit();importAllText(item.text);$('backup-dialog').close();}catch(error){$('backup-error').textContent=error.message;}};
-  function save(){if(unreadableSave!==null){$('save-status').textContent='原存档已保留，请先导出备份';return;}clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem('logic-workshop-v1',JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera}));$('save-status').textContent='已保存到此浏览器';}catch{$('save-status').textContent='存储不可用，请导出备份';}},200);}
+  function save(){if(unreadableSave!==null||storageReadFailed){$('save-status').textContent='原存档已保留，请先导出备份';return;}clearTimeout(saveTimer);saveTimer=setTimeout(()=>checkpoint('自动保存恢复点'),200);}
   function commit(before){
     const missing=(a,b)=>{const ids=new Set(b.map(item=>item.id));return a.some(item=>!ids.has(item.id));};
     const removed=missing(before.nodes,state.nodes)||missing(before.wires,state.wires)||Object.keys(before.definitions).some(id=>!state.definitions[id]||(!before.definitions[id].hidden&&state.definitions[id].hidden));
     if(removed){const original=C.clone(before.editorRoot||before);delete original.editorRoot;delete original.wireOverrides;backupText(JSON.stringify({...original,camera:gateEditor?gateEditor.camera:camera}),'删除前');}
     if(gateEditor){try{gateEditor.root=C.updateDefinition({...gateEditor.root,definitions:state.definitions,displayFormat:state.displayFormat||'unsigned'},gateEditor.id,state);state.definitions=gateEditor.root.definitions;}catch(error){state=C.clone(before);if(before.editorRoot){gateEditor.root=C.clone(before.editorRoot);state.definitions=gateEditor.root.definitions;}toast(error.message);render();return;}}state.definitions=C.pruneDefinitions(gateEditor?gateEditor.root:state);if(gateEditor)gateEditor.root.definitions=state.definitions;if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}if(removed)backupText(saveText(),'删除后');render();save();}
-  function change(fn){if(unreadableSave!==null){toast('原存档读取失败，已保留；请先全部导出备份，再导入恢复');return;}if(expanded){toast(expanded.libraryView?'切换到编辑模式后可修改':'全部收回后即可继续编辑电路');return;}cancelPaste();const before=snapshot();fn();commit(before);}
+  function change(fn){if(unreadableSave!==null||storageReadFailed){toast('原存档读取失败，已保留；请先全部导出备份，再导入恢复');return;}if(expanded){toast(expanded.libraryView?'切换到编辑模式后可修改':'全部收回后即可继续编辑电路');return;}cancelPaste();const before=snapshot();fn();commit(before);}
   function restore(s){stopRunning();state=C.clone(s);if(gateEditor&&s.editorRoot){gateEditor.root=C.clone(s.editorRoot);state.definitions=gateEditor.root.definitions;delete state.editorRoot;}selected=null;render();save();}
   function undo(){if(!past.length)return;future.push(snapshot());restore(past.pop());}
   function redo(){if(!future.length)return;past.push(snapshot());restore(future.pop());}
@@ -330,7 +343,7 @@
   $('export').onclick=()=>{try{exportAll();toast('全部电路与自定义门已导出到一个存档文件');}catch{toast('导出失败，原内容已保留，请重试');}};
   $('export-clear').onclick=()=>{if(expanded||gesture||placement)return;$('export-clear-summary').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线 · '+Object.values(state.definitions).filter(d=>!d.hidden).length+' 个自定义门';$('export-clear-dialog').showModal();};
   $('confirm-export-clear').onclick=()=>{if(expanded)return;stopRunning();try{exportAll();}catch{toast('导出失败，原内容已保留，请重试');return;}change(()=>{state={version:1,nodes:[],wires:[],definitions:{}};selected=null;});$('export-clear-dialog').close();toast('已导出并全部清空；取消下载或想恢复时，按 Ctrl+Z');};
-  function importAllText(text){if(new TextEncoder().encode(text).length>2*1024*1024)throw Error('存档过大，请使用 2MB 以内的内容');const next=C.validate(JSON.parse(text));if(expanded)throw Error('全部收回后即可导入');stopRunning();unreadableSave=null;change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('全部内容已导入，可以撤销恢复');}
+  function importAllText(text){if(new TextEncoder().encode(text).length>2*1024*1024)throw Error('存档过大，请使用 2MB 以内的内容');const next=C.validate(JSON.parse(text));if(expanded)throw Error('全部收回后即可导入');stopRunning();unreadableSave=null;storageReadFailed=false;change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('全部内容已导入，可以撤销恢复');}
   $('import').onclick=()=>{$('import-text').value='';$('import-error').textContent='';$('import-dialog').showModal();$('import-text').focus();};
   $('import-file').onclick=()=>$('file-input').click();
   $('import-form').onsubmit=e=>{e.preventDefault();try{importAllText($('import-text').value);$('import-dialog').close();}catch(error){$('import-error').textContent=error instanceof SyntaxError?'存档不是有效 JSON，请粘贴完整文字':error.message;}};
@@ -344,10 +357,10 @@
   document.addEventListener('pointercancel',()=>{touchButton=null;},true);
   document.addEventListener('pointerup',e=>{const t=touchButton;touchButton=null;if(e.pointerType!=='touch'||!t||t.id!==e.pointerId||t.button!==e.target.closest('button,[data-toggle],[data-bit-toggle]')||t.button.disabled||Math.hypot(e.clientX-t.x,e.clientY-t.y)>12)return;lastTouch={button:t.button,time:Date.now(),x:e.clientX,y:e.clientY};e.preventDefault();if(t.button.dataset.toggle)toggle(t.button.dataset.toggle);else if(t.button.dataset.bitToggle)activateBit(t.button);else t.button.click();},true);
   document.addEventListener('click',e=>{if(!e.isTrusted||!lastTouch||Date.now()-lastTouch.time>=700)return;const hit=e.target.closest('button,[data-toggle],[data-bit-toggle]'),sameButton=hit===lastTouch.button||(lastTouch.button.dataset.bitToggle&&hit?.dataset.bitToggle===lastTouch.button.dataset.bitToggle&&hit.dataset.bit===lastTouch.button.dataset.bit)||(lastTouch.button.dataset.toggle&&hit?.dataset.toggle===lastTouch.button.dataset.toggle),deletedRowClick=lastTouch.button.dataset.deleteCustom&&(e.pointerType==='touch'||e.sourceCapabilities?.firesTouchEvents)&&Math.hypot(e.clientX-lastTouch.x,e.clientY-lastTouch.y)<=12;if(sameButton||deletedRowClick){e.preventDefault();e.stopImmediatePropagation();}},true);
-  let restored=false;
-  try{const raw=localStorage.getItem('logic-workshop-v1');if(raw){backupText(raw,'加载前');unreadableSave=raw;state=C.validate(JSON.parse(raw));unreadableSave=null;if(state.camera){camera=state.camera;restored=true;}}}catch{toast('上次存档无法读取，原记录已保留；请先全部导出备份。');}
+  let restored=false,recoveredBackup=false;
+  try{let raw=localStorage.getItem('logic-workshop-v1');const pending=readBackups()[0];if(pending?.reason==='自动恢复备份'&&Object.hasOwn(pending,'recoverFrom')&&pending.recoverFrom===raw){try{C.validate(JSON.parse(pending.text));raw=pending.text;recoveredBackup=true;}catch{}}if(raw){backupText(raw,'加载前');unreadableSave=raw;state=C.validate(JSON.parse(raw));unreadableSave=null;if(state.camera){camera=state.camera;restored=true;}}}catch{storageReadFailed=unreadableSave===null;toast('上次存档无法读取，原记录已保留；请先全部导出备份。');}
   const oldRouting=snapshot();if(repairWirePaths()){past.push(oldRouting);save();}
-  render();if(!restored)fit(true);
+  render();if(!restored)fit(true);if(recoveredBackup)checkpoint('恢复刷新备份后');
   let oldWidth=svg.clientWidth,oldHeight=svg.clientHeight;new ResizeObserver(()=>{const w=svg.clientWidth,h=svg.clientHeight;camera.x+=(w-oldWidth)/2;camera.y+=(h-oldHeight)/2;oldWidth=w;oldHeight=h;setCamera();}).observe(svg);
   window.LogicApp={getState:()=>C.clone({...storedSnapshot(),camera:expanded?expanded.camera:camera}),getSimulation:()=>C.clone(sim),getPerformance:()=>({simulation:{...simulate.stats},counts:{...countComponents.stats}}),getView:()=>({editingGate:gateEditor?.id||null,gateMode:gateEditor?(expanded?.libraryView?'view':'edit'):null,expanded:!!expanded,instanceView:!!expanded?.instanceView,depth:expanded?.instanceView?expanded.parents.length+1:0,debugNode:expanded?.debugNode||null,leafCount:expanded?.view.leaves.length||0,camera:{...camera}})};
 })();
