@@ -33,22 +33,42 @@
   const key=p=>p.node+':'+p.dir+':'+p.port;
   function anchor(e,state){if(!e.node)return {x:e.x,y:e.y};const n=state.nodes.find(n=>n.id===e.node);return ports(n,state.definitions).find(p=>p.dir===e.dir&&p.port===e.port);}
   function points(w,state){const a=anchor(w.a,state),b=anchor(w.b,state);if(w.via?.length)return [a,...w.via,b];const x=(a.x+b.x)/2;return [a,{x,y:a.y},{x,y:b.y},b];}
+  function segmentsOverlap(p,q,c,d){const dx=q.x-p.x,dy=q.y-p.y,ex=d.x-c.x,ey=d.y-c.y;if((!dx&&!dy)||(!ex&&!ey)||Math.abs(dx*ey-dy*ex)>1e-7||Math.abs(dx*(c.y-p.y)-dy*(c.x-p.x))>1e-7)return false;const axis=Math.abs(dx)>=Math.abs(dy)?'x':'y';return Math.min(Math.max(p[axis],q[axis]),Math.max(c[axis],d[axis]))-Math.max(Math.min(p[axis],q[axis]),Math.min(c[axis],d[axis]))>1e-7;}
+  function segmentHitsBox(p,q,r){let low=0,high=1;for(const [axis,extent] of [['x','w'],['y','h']]){const delta=q[axis]-p[axis],min=r[axis]+1e-7,max=r[axis]+r[extent]-1e-7;if(!delta){if(p[axis]<=min||p[axis]>=max)return false;}else{const a=(min-p[axis])/delta,b=(max-p[axis])/delta;low=Math.max(low,Math.min(a,b));high=Math.min(high,Math.max(a,b));if(low>=high)return false;}}return low<high;}
+  function wireOverlaps(w,state){const ps=points(w,state);return state.wires.some(other=>other.id!==w.id&&points(other,state).slice(1).some((q,i,tail)=>{const p=i?tail[i-1]:anchor(other.a,state);return ps.slice(1).some((b,j)=>segmentsOverlap(ps[j],b,p,q));}));}
+  function wireHitsGate(w,state){const ps=points(w,state);return state.nodes.some(n=>{const box={...n,...size(n,state.definitions)};return ps.slice(1).some((q,i)=>segmentHitsBox(ps[i],q,box));});}
   function route(aEnd,bEnd,state,ignoreWire=null){
     const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-8,y:n.y-8,w:size(n,state.definitions).w+16,h:size(n,state.definitions).h+16}));
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap(w=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b}));});
-    const overlap=(p,q,c,d)=>p.x===q.x&&c.x===d.x&&Math.abs(p.x-c.x)<.01?Math.min(Math.max(p.y,q.y),Math.max(c.y,d.y))-Math.max(Math.min(p.y,q.y),Math.min(c.y,d.y))>.01:p.y===q.y&&c.y===d.y&&Math.abs(p.y-c.y)<.01&&Math.min(Math.max(p.x,q.x),Math.max(c.x,d.x))-Math.max(Math.min(p.x,q.x),Math.min(c.x,d.x))>.01;
-    const clear=(p,q,owner=null)=>!segments.some(s=>overlap(p,q,s.a,s.b))&&!boxes.some(r=>r.id!==owner&&(p.x===q.x?p.x>r.x&&p.x<r.x+r.w&&Math.max(p.y,q.y)>r.y&&Math.min(p.y,q.y)<r.y+r.h:p.y>r.y&&p.y<r.y+r.h&&Math.max(p.x,q.x)>r.x&&Math.min(p.x,q.x)<r.x+r.w));
-    const lead=(end,p)=>{if(!end.node)return [p];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;const choices=[[p,{x:p.x+dx*20,y:p.y+dy*20}],...[ -20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*20,y:q.y+dy*20}];})];return choices.find(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)))||choices[0];};
-    const aLead=lead(aEnd,a),bLead=lead(bEnd,b),A=aLead.at(-1),B=bLead.at(-1);
-    const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if((u.x===v.x&&v.x===p.x)||(u.y===v.y&&v.y===p.y))out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
-    const candidates=[[A,{x:(A.x+B.x)/2,y:A.y},{x:(A.x+B.x)/2,y:B.y},B],[A,{x:B.x,y:A.y},B],[A,{x:A.x,y:B.y},B]];
+    const overlap=segmentsOverlap;
+    const clear=(p,q,owner=null)=>!segments.some(s=>overlap(p,q,s.a,s.b))&&!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
+    const leads=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;const choices=[[p,{x:p.x+dx*20,y:p.y+dy*20}],...[ -20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*20,y:q.y+dy*20}];})],usable=choices.filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));if(usable.length)return usable;
+      // More than three outgoing orthogonal rays cannot share only a port point.
+      // Short distinct angled exits keep dense fanout connected without shared strokes.
+      for(let offset=1;offset<=256&&usable.length<4;offset++)for(const sign of [-1,1]){const q={x:p.x+dx*20-dy*offset*sign,y:p.y+dy*20+dx*offset*sign};if(clear(p,q,end.node))usable.push([p,q]);}return usable;
+    };
+    const starts=leads(aEnd,a),ends=leads(bEnd,b);if(!starts.length||!ends.length)return null;
+    const A=starts[0].at(-1),B=ends[0].at(-1);
+    const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if((u.x===v.x&&v.x===p.x&&(v.y-u.y)*(p.y-v.y)>=0)||(u.y===v.y&&v.y===p.y&&(v.x-u.x)*(p.x-v.x)>=0))out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
+    const complete=(start,ps,end)=>{const result=clean([...start,...ps,...end.slice().reverse()]);for(let i=1;i<result.length;i++){if(segments.some(s=>overlap(result[i-1],result[i],s.a,s.b)))return null;for(let j=1;j<i;j++)if(overlap(result[i-1],result[i],result[j-1],result[j]))return null;}return result;};
     const ys=[...new Set([...boxes.flatMap(r=>[r.y-12,r.y+r.h+12]),...segments.flatMap(s=>[s.a.y-12,s.a.y+12,s.b.y-12,s.b.y+12])])].sort((x,y)=>Math.abs(x-(A.y+B.y)/2)-Math.abs(y-(A.y+B.y)/2));
     const xs=[...new Set([...boxes.flatMap(r=>[r.x-12,r.x+r.w+12]),...segments.flatMap(s=>[s.a.x-12,s.a.x+12,s.b.x-12,s.b.x+12])])].sort((x,y)=>Math.abs(x-(A.x+B.x)/2)-Math.abs(y-(A.x+B.x)/2));
-    for(const y of ys)candidates.push([A,{x:A.x,y},{x:B.x,y},B]);for(const x of xs)candidates.push([A,{x,y:A.y},{x,y:B.y},B]);
-    for(const ps of candidates)if(ps.slice(1).every((p,i)=>clear(ps[i],p)))return clean([...aLead,...ps,...bLead.slice().reverse()]);
-    const X=[...new Set([A.x,B.x,...xs])].sort((a,b)=>a-b),Y=[...new Set([A.y,B.y,...ys])].sort((a,b)=>a-b),width=X.length,start=Y.indexOf(A.y)*width+X.indexOf(A.x),goal=Y.indexOf(B.y)*width+X.indexOf(B.x),queue=[start],prev=new Map([[start,null]]);
-    for(let head=0;head<queue.length&&head<20000;head++){const id=queue[head],x=id%width,y=Math.floor(id/width);if(id===goal){const ps=[];for(let k=id;k!==null;k=prev.get(k))ps.push({x:X[k%width],y:Y[Math.floor(k/width)]});return clean([...aLead,...ps.reverse(),...bLead.slice().reverse()]);}for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const next=ny*width+nx;if(!prev.has(next)&&clear({x:X[x],y:Y[y]},{x:X[nx],y:Y[ny]})){prev.set(next,id);queue.push(next);}}}
-    return clean([...aLead,...candidates[0],...bLead.slice().reverse()]);
+    for(const start of starts)for(const end of ends){const a=start.at(-1),b=end.at(-1),candidates=[[a,{x:(a.x+b.x)/2,y:a.y},{x:(a.x+b.x)/2,y:b.y},b],[a,{x:b.x,y:a.y},b],[a,{x:a.x,y:b.y},b]];
+      for(const y of ys)candidates.push([a,{x:a.x,y},{x:b.x,y},b]);for(const x of xs)candidates.push([a,{x,y:a.y},{x,y:b.y},b]);
+      for(const ps of candidates)if(ps.slice(1).every((p,i)=>clear(ps[i],p))){const result=complete(start,ps,end);if(result)return result;}
+    }
+    // Search all usable exits together. Failure must never invent an unchecked path.
+    const tips=[...starts,...ends].map(ps=>ps.at(-1)),X=[...new Set([...tips.map(p=>p.x),...xs])].sort((a,b)=>a-b),Y=[...new Set([...tips.map(p=>p.y),...ys])].sort((a,b)=>a-b),width=X.length,index=p=>Y.indexOf(p.y)*width+X.indexOf(p.x),goals=new Map(ends.map(ps=>[index(ps.at(-1)),ps])),origins=new Map(),prev=new Map(),cost=new Map(),heap=[];
+    const estimate=p=>Math.min(...ends.map(ps=>{const b=ps.at(-1);return Math.abs(p.x-b.x)+Math.abs(p.y-b.y);}));
+    const push=item=>{let i=heap.length;heap.push(item);while(i){const p=(i-1)>>1;if(heap[p].f<=item.f)break;heap[i]=heap[p];i=p;}heap[i]=item;};
+    const pop=()=>{const first=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let c=i*2+1;if(c+1<heap.length&&heap[c+1].f<heap[c].f)c++;if(last.f<=heap[c].f)break;heap[i]=heap[c];i=c;}heap[i]=last;}return first;};
+    for(const ps of starts){const p=ps.at(-1),id=index(p);origins.set(id,ps);prev.set(id,null);cost.set(id,0);push({id,g:0,f:estimate(p)});}
+    for(let visited=0;heap.length&&visited<20000;visited++){
+      const current=pop(),{id,g}=current;if(g!==cost.get(id))continue;const x=id%width,y=Math.floor(id/width),p={x:X[x],y:Y[y]};
+      if(goals.has(id)){const ps=[];let start=id;for(let k=id;k!==null;k=prev.get(k)){start=k;ps.push({x:X[k%width],y:Y[Math.floor(k/width)]});}const result=complete(origins.get(start),ps.reverse(),goals.get(id));if(result)return result;}
+      for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const next=ny*width+nx,q={x:X[nx],y:Y[ny]},ng=g+Math.abs(p.x-q.x)+Math.abs(p.y-q.y);if(ng<(cost.get(next)??Infinity)&&clear(p,q)){cost.set(next,ng);prev.set(next,id);push({id:next,g:ng,f:ng+estimate(q)});}}
+    }
+    return null;
   }
   function project(p,a,b){const dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));return {x:a.x+t*dx,y:a.y+t*dy};}
   const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
@@ -248,7 +268,7 @@
     }
     for(const [path,value] of Object.entries(next.delayState||{})){let local=next,n;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){n=local.nodes.find(n=>n.id===parts[i]);if(!n)break;if(i<parts.length-1){if(n.type!=='custom'){n=null;break;}local=next.definitions[n.def];}}if(n?.type==='delay')next.delayState[path]=packBits(bitArray(value,width(n)));else delete next.delayState[path];}
     validate(next);
-    for(const local of [next,...Object.values(next.definitions)]){const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>local.nodes.some(n=>n.id===e.node&&n.type==='custom'&&n.def===id)))w.via=route(w.a,w.b,active,w.id).slice(1,-1);}
+    for(const local of [next,...Object.values(next.definitions)]){const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>local.nodes.some(n=>n.id===e.node&&n.type==='custom'&&n.def===id))){const routed=route(w.a,w.b,active,w.id);if(routed)w.via=routed.slice(1,-1);}}
     return next;
   }
   function pruneDefinitions(state){
@@ -287,5 +307,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });

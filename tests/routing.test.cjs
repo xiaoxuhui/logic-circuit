@@ -1,5 +1,26 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('../src/core.js');
 const state=rotation=>({version:1,nodes:[{id:'a',type:'input',x:0,y:0,value:1},{id:'block',type:'nand',x:280,y:-20,rotation},{id:'o',type:'output',x:600,y:0}],wires:[],definitions:{}});
+const sharesLength=(p,q,r,t)=>{const u={x:q.x-p.x,y:q.y-p.y},v={x:t.x-r.x,y:t.y-r.y},len=Math.hypot(u.x,u.y);if(!len||!Math.hypot(v.x,v.y)||Math.abs(u.x*v.y-u.y*v.x)>1e-8||Math.abs((r.x-p.x)*u.y-(r.y-p.y)*u.x)>1e-8)return false;const dot=z=>((z.x-p.x)*u.x+(z.y-p.y)*u.y)/len;return Math.min(len,Math.max(dot(r),dot(t)))-Math.max(0,Math.min(dot(r),dot(t)))>1e-8;};
+function noOverlap(route,s){for(const w of s.wires){const old=C.points(w,s);for(let i=1;i<route.length;i++)for(let j=1;j<old.length;j++)assert.ok(!sharesLength(route[i-1],route[i],old[j-1],old[j]),'positive-length overlap with '+w.id);}}
+test('an occupied four-way junction never falls back to overlapping an old segment',()=>{
+  const s={nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]},before=C.clone(s);
+  assert.equal(C.route({x:0,y:0},{x:200,y:200},s),null);assert.deepEqual(s,before);
+});
+test('crowded port fanout uses distinct exits without overlap or mutation',()=>{
+  const s={version:1,nodes:[{id:'i',type:'input',x:0,y:0,value:1},...Array.from({length:5},(_,i)=>({id:'o'+i,type:'output',x:600,y:i*120}))],definitions:{},wires:[]},a={node:'i',dir:'out',port:0};let accepted=0,refused=0;
+  for(let i=0;i<5;i++){const b={node:'o'+i,dir:'in',port:0},before=C.clone(s),route=C.route(a,b,s);assert.deepEqual(s,before);if(!route){refused++;continue;}noOverlap(route,s);s.wires.push({id:'w'+i,a,b,via:route.slice(1,-1),autoRoute:true});accepted++;assert.deepEqual(C.simulate(s).outputs['o'+i],[1]);}
+  assert.equal(accepted,5);assert.equal(refused,0);
+  const branch={x:200,y:40},b={node:'o4',dir:'in',port:0},route=C.route(branch,b,s);assert.ok(route);noOverlap(route,s);s.wires.push({id:'branch',a:branch,b,via:route.slice(1,-1)});assert.deepEqual(C.simulate(s).outputs.o4,[1]);
+});
+for(const rotation of [0,90,180,270])test('sixteen fanout instances remain distinct at rotation '+rotation,()=>{
+  const s={version:1,nodes:[{id:'i',type:'input',x:0,y:0,rotation,value:1},...Array.from({length:16},(_,i)=>({id:'o'+i,type:'output',x:600,y:i*96-600}))],definitions:{},wires:[]},a={node:'i',dir:'out',port:0};
+  for(let i=0;i<16;i++){const b={node:'o'+i,dir:'in',port:0},route=C.route(a,b,s);assert.ok(route,'fanout '+i);noOverlap(route,s);s.wires.push({id:'w'+i,a,b,via:route.slice(1,-1),autoRoute:true});assert.equal(C.wireOverlaps(s.wires.at(-1),s),false);assert.equal(C.wireHitsGate(s.wires.at(-1),s),false);}
+  assert.deepEqual(Object.values(C.simulate(s).outputs),Array.from({length:16},()=>[1]));C.validate(s);
+});
+test('collinear diagonal runs are avoided while a diagonal point crossing is legal',()=>{
+  const s={nodes:[],definitions:{},wires:[{id:'d',a:{x:0,y:0},b:{x:100,y:100},via:[{x:50,y:50}]}]},route=C.route({x:10,y:10},{x:90,y:90},s);assert.ok(route);noOverlap(route,s);
+  const crossing=C.route({x:0,y:50},{x:100,y:50},s);assert.deepEqual(crossing,[{x:0,y:50},{x:100,y:50}]);
+});
 for(const rotation of [0,90,180,270])test('routes around gate at '+rotation+' degrees without changing endpoints',()=>{const s=state(rotation),before=C.clone(s),a={node:'a',dir:'out',port:0},b={node:'o',dir:'in',port:0},ps=C.route(a,b,s),box={...s.nodes[1],...C.size(s.nodes[1],{})};assert.deepEqual(ps[0],{x:152,y:40});assert.deepEqual(ps.at(-1),{x:600,y:40});for(let i=1;i<ps.length;i++){const p=ps[i-1],q=ps[i];assert.ok(p.x===q.x||p.y===q.y);const cross=p.x===q.x?p.x>box.x&&p.x<box.x+box.w&&Math.max(p.y,q.y)>box.y&&Math.min(p.y,q.y)<box.y+box.h:p.y>box.y&&p.y<box.y+box.h&&Math.max(p.x,q.x)>box.x&&Math.min(p.x,q.x)<box.x+box.w;assert.equal(cross,false);}s.wires=[{id:'w',a,b,via:ps.slice(1,-1),autoRoute:true}];assert.deepEqual(C.simulate(s).outputs.o,[1]);C.validate(s);s.wires=[];assert.deepEqual(s,before);});
 
 test('permits a point crossing but avoids sharing an existing horizontal or vertical segment',()=>{const s={nodes:[],definitions:{},wires:[{id:'old',a:{x:0,y:40},b:{x:500,y:40}}]};const crossing=C.route({x:250,y:0},{x:250,y:80},s);assert.deepEqual(crossing,[{x:250,y:0},{x:250,y:80}]);const routed=C.route({x:100,y:40},{x:400,y:40},s);assert.ok(routed.some(p=>p.y!==40));for(let i=1;i<routed.length;i++)assert.ok(!(routed[i-1].y===40&&routed[i].y===40&&Math.min(routed[i-1].x,routed[i].x)<500&&Math.max(routed[i-1].x,routed[i].x)>0));});
