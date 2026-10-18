@@ -34,3 +34,11 @@ test('display cache is bounded and evicts rather than precomputing possible inpu
 test('thirty thousand NANDs expand completely using cached subtrees without the old node cutoff',()=>{
   E.clearCache();const source=require('./large-expansion-fixture.cjs')(),before=C.clone(source),view=E.build(source);assert.equal(C.countComponents(source).nand,30000);assert.equal(view.leaves.filter(n=>n.type==='nand').length,30000);assert.ok(view.count>30000);assert.ok(E.getCacheStats().hits>=99);assert.ok(E.getCacheStats().bytes<=E.getCacheStats().maxBytes);assert.deepEqual(source,before);assert.ok(!view.svg.includes('undefined'));
 });
+test('shared scenes draw only visible instances and remap wire hit testing to their real scope',()=>{
+  E.clearCache();const s=fixture(),view=E.build(s,{compact:true});assert.equal(view.leaves.filter(n=>n.type==='nand').length,2);assert.ok(view.symbols.length<view.layouts.length);assert.ok(view.svg.length<100000);
+  const whole=E.viewportSvg(view,{x:0,y:0,w:view.w,h:view.h},1);assert.ok(!whole.includes('<use '));assert.ok(whole.includes('data-expanded-scope="root/a/child"'));assert.ok(whole.includes('data-expanded-scope="root/b/child"'));
+  const origins=new Map([['root',{x:0,y:0}]]);for(const layout of [...view.layouts].reverse()){const parent=origins.get(layout.scope);for(const child of layout.children)origins.set(child.scope,{x:parent.x+child.x,y:parent.y+child.y});}
+  const local=view.layouts.find(l=>l.scope==='root/a/child'),route=local.routes.find(r=>r.wire==='no'),segment=route.paths.find(p=>p.length>1),a=segment[0],b=segment[1],origin=origins.get(local.scope),point={x:origin.x+(a.x+b.x)/2,y:origin.y+(a.y+b.y)/2};assert.deepEqual(E.hitTest(view,point,1),{scope:'root/a/child',id:'no'});
+  const blank=E.viewportSvg(view,{x:-100000,y:-100000,w:10,h:10},1);assert.ok(!blank.includes('data-expanded-scope="root/a/child"'));
+  const tiny=E.viewportSvg(view,{x:0,y:0,w:view.w,h:view.h},.00001);assert.ok(tiny.length<whole.length);
+});

@@ -162,6 +162,7 @@
   }
   function lookupState(table,ins,scope,context){return table.lookup(ins,table.registers.map(p=>context.memory[scope+'/'+p.path]||0),context.stats);}
   function definitionInfo(id,defs){const table=tableFor(id,defs,compiledTables(defs));return table.eligible?{method:'truth-table',inputBits:table.inputBits,cachedRows:table.rows.size,...(table.stateBits?{stateBits:table.stateBits,cachedBytes:table.cachedBytes}:{})}:{method:'circuit',reason:table.reason};}
+  function createSimulationContext(state){return {tables:compiledTables(state.definitions||{}),topologyCache:new Map()};}
   function createSimulator(){
     let signature=null,session;
     const run=state=>{
@@ -377,5 +378,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
