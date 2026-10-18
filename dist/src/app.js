@@ -55,13 +55,14 @@
   function redo(){if(!future.length)return;past.push(snapshot());restore(future.pop());}
   function localPoint(e){const b=svg.getBoundingClientRect();return {x:e.clientX-b.left,y:e.clientY-b.top};}
   function worldPoint(e){const p=localPoint(e);return {x:(p.x-camera.x)/camera.scale,y:(p.y-camera.y)/camera.scale};}
-  function setCamera(){
+  let cameraMotionUntil=0;
+  function setCamera(moving=false){
     $('world').setAttribute('transform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('grid').setAttribute('patternTransform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('zoom-label').textContent=Math.round(camera.scale*100)+'%';
-    if(expanded?.view.compact)drawExpanded();
+    if(expanded?.view.compact){if(moving){cameraMotionUntil=performance.now()+100;scheduleViewportDraw();}else drawExpanded();}
   }
-  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
+  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2},moving=false){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera(moving);save();}
   function fit(initialView=false){
     if(expanded){const view=expanded.view,top=expanded.instanceView?180:100,bottom=expanded.instanceView?140:80,fitted=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-top-bottom)/view.h)),scale=initialView?Math.max(.8,fitted):fitted;camera={x:initialView?40:(svg.clientWidth-view.w*scale)/2,y:initialView?140:top+(svg.clientHeight-top-bottom-view.h*scale)/2,scale};setCamera();save();return;}
     if(!state.nodes.length){camera={x:svg.clientWidth/2,y:svg.clientHeight/2,scale:1};setCamera();return;}
@@ -108,7 +109,7 @@
   let expansionWorker=null,expansionJob=null,pendingExpansion=null,expansionSequence=0;
   const largeExpansion=source=>Object.values(countComponents(source)).reduce((a,b)=>a+b,0)>5000;
   const pendingView=()=>({compact:true,pending:true,svg:'',w:200,h:120,leaves:[],frames:[],layouts:[]});
-  function applyExpansionReady(){if(!expanded?.readyView||gesture||activePointers.size)return;const {view,stats,initial,initialCamera}=expanded.readyView;delete expanded.readyView;expanded.view=view;expanded.renderStats=stats;render();if(initial&&JSON.stringify(camera)===JSON.stringify(initialCamera))fit(true);}
+  function applyExpansionReady(){if(!expanded?.readyView||gesture||activePointers.size)return;if(performance.now()<cameraMotionUntil){scheduleViewportDraw();return;}const {view,stats,initial,initialCamera}=expanded.readyView;delete expanded.readyView;expanded.view=view;expanded.renderStats=stats;render();if(initial&&JSON.stringify(camera)===JSON.stringify(initialCamera))fit(true);}
   function pumpExpansion(){if(expansionJob||!pendingExpansion)return;if(!expansionWorker){expansionWorker=new Worker('./src/expanded.js');expansionWorker.onmessage=e=>{const job=expansionJob;expansionJob=null;if(job?.frame===expanded){if(e.data.error){expanded.view.pending=false;toast(e.data.error);}else{expanded.readyView={view:e.data.view,stats:e.data.stats,initial:job.initial,initialCamera:job.initialCamera};applyExpansionReady();}}pumpExpansion();};expansionWorker.onerror=()=>{expansionJob=null;pendingExpansion=null;toast('展开后台计算失败，请收回后重试');};}expansionJob=pendingExpansion;pendingExpansion=null;expansionWorker.postMessage({id:expansionJob.id,source:expansionJob.source,options:{debugNode:expansionJob.frame.debugNode,readOnly:!!expansionJob.frame.libraryView}});}
   function requestExpansion(frame,source,initial=false){const key=JSON.stringify(source);if(frame.workerKey===key)return;frame.workerKey=key;pendingExpansion={id:++expansionSequence,frame,source,initial,initialCamera:{...camera}};pumpExpansion();}
   function refreshExpanded(){
@@ -206,12 +207,19 @@
     svg.querySelectorAll('[data-wire]').forEach(el=>el.classList.toggle('selected',selected?.type==='wire'&&selected.id===el.dataset.wire));
     renderInspector();$('delete').disabled=!selected;$('rotate').disabled=!['node','nodes'].includes(selected?.type);$('debug').disabled=selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);
   }
-  let drawnExpandedSvg=null;
-  function drawExpanded(){if(!expanded)return;const view=expanded.view,markup=view.compact?window.LogicExpanded.viewportSvg(view,{x:-camera.x/camera.scale,y:-camera.y/camera.scale,w:svg.clientWidth/camera.scale,h:svg.clientHeight/camera.scale},camera.scale):view.svg;if(drawnExpandedSvg!==markup){$('node-layer').innerHTML=markup;drawnExpandedSvg=markup;}}
+  let drawnExpandedSvg=null,drawnRegion=null,viewportTimer=null;
+  function scheduleViewportDraw(){clearTimeout(viewportTimer);viewportTimer=setTimeout(()=>{applyExpansionReady();drawExpanded();},110);}
+  function drawExpanded(){if(!expanded)return;const view=expanded.view;if(view.compact&&performance.now()<cameraMotionUntil){scheduleViewportDraw();return;}let markup=view.svg;
+    if(view.compact){const rect={x:-camera.x/camera.scale,y:-camera.y/camera.scale,w:svg.clientWidth/camera.scale,h:svg.clientHeight/camera.scale},r=drawnRegion;
+      if(r?.view===view&&rect.x>=r.x&&rect.y>=r.y&&rect.x+rect.w<=r.x+r.w&&rect.y+rect.h<=r.y+r.h&&camera.scale>=r.scale*.8&&camera.scale<=r.scale*1.25)return;
+      const padX=rect.w*.35,padY=rect.h*.35;drawnRegion={view,x:rect.x-padX,y:rect.y-padY,w:rect.w+2*padX,h:rect.h+2*padY,scale:camera.scale};markup=window.LogicExpanded.viewportSvg(view,drawnRegion,camera.scale);
+    }else drawnRegion=null;
+    if(drawnExpandedSvg!==markup){$('node-layer').innerHTML=markup;drawnExpandedSvg=markup;}
+  }
   function render(){
     if(delayInspectorTarget){const list=$('selection-panel').querySelector('.delay-state-list');if(list)delayInspectorTarget.scrollTop=list.scrollTop;}
     $('number-format').value=state.displayFormat||'unsigned';
-    sim=simulate(state);if(expanded){$('wire-layer').innerHTML='';drawExpanded();$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');const target=expanded.instanceView?expanded.target:gateEditor?{type:'custom',def:gateEditor.id}:expanded.libraryId?{type:'custom',def:expanded.libraryId}:state.nodes.find(n=>n.id===expanded.debugNode),sources=expanded.libraryView||expanded.instanceView?[]:state.nodes.filter(n=>n.type==='input');$('selection-panel').innerHTML='<div class="selection-eyebrow">'+(expanded.instanceView?'状态查看':expanded.libraryView?'查看模式 · 只读':target?'逻辑门调试':'已全部展开')+'</div><div class="selected-name">'+escape(target?(expanded.libraryView||expanded.instanceView?'查看：':'调试：')+title(target):'实时调试电路')+'</div><p class="selection-description">'+(expanded.instanceView?'当前实例的输入和延迟状态已带入内部，保持原值。<br>左键点击内部自定义门继续进入；右键元件编辑其延迟状态。<br>点击导线设置临时值。<br>点击“退出”返回上一层。':expanded.libraryView?'查看内部结构，可平移、缩放；点击导线设置临时输入。<br>切换到编辑模式可修改原层级电路。':'点击输入位可实时切换，返回后保留。<br>输入组、输出组保持各自原来的相对位置。<br>点击导线设置临时输入，点击“返回原电路”恢复画布。')+'</p><div class="debug-sources">'+sources.map(n=>'<div class="debug-source"><span>'+escape(title(n))+'</span><div class="bit-switches">'+bitSwitches(n)+'</div></div>').join('')+'</div>';$('selection-status').textContent=(expanded.instanceView?'状态查看 · 第 '+(expanded.parents.length+1)+' 层 · ':expanded.libraryView?'查看模式 · ':'实时调试 · ')+expanded.view.leaves.length+' 个原始元件';}else{drawnExpandedSvg=null;renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
+    sim=simulate(state);if(expanded){$('wire-layer').innerHTML='';drawExpanded();$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');const target=expanded.instanceView?expanded.target:gateEditor?{type:'custom',def:gateEditor.id}:expanded.libraryId?{type:'custom',def:expanded.libraryId}:state.nodes.find(n=>n.id===expanded.debugNode),sources=expanded.libraryView||expanded.instanceView?[]:state.nodes.filter(n=>n.type==='input');$('selection-panel').innerHTML='<div class="selection-eyebrow">'+(expanded.instanceView?'状态查看':expanded.libraryView?'查看模式 · 只读':target?'逻辑门调试':'已全部展开')+'</div><div class="selected-name">'+escape(target?(expanded.libraryView||expanded.instanceView?'查看：':'调试：')+title(target):'实时调试电路')+'</div><p class="selection-description">'+(expanded.instanceView?'当前实例的输入和延迟状态已带入内部，保持原值。<br>左键点击内部自定义门继续进入；右键元件编辑其延迟状态。<br>点击导线设置临时值。<br>点击“退出”返回上一层。':expanded.libraryView?'查看内部结构，可平移、缩放；点击导线设置临时输入。<br>切换到编辑模式可修改原层级电路。':'点击输入位可实时切换，返回后保留。<br>输入组、输出组保持各自原来的相对位置。<br>点击导线设置临时输入，点击“返回原电路”恢复画布。')+'</p><div class="debug-sources">'+sources.map(n=>'<div class="debug-source"><span>'+escape(title(n))+'</span><div class="bit-switches">'+bitSwitches(n)+'</div></div>').join('')+'</div>';$('selection-status').textContent=(expanded.instanceView?'状态查看 · 第 '+(expanded.parents.length+1)+' 层 · ':expanded.libraryView?'查看模式 · ':'实时调试 · ')+expanded.view.leaves.length+' 个原始元件';}else{drawnExpandedSvg=null;drawnRegion=null;renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
     $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;$('rotate').disabled=!!expanded||!['node','nodes'].includes(selected?.type);$('debug').disabled=!!expanded||selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);$('exit-gate').hidden=!expanded?.instanceView;$('back-to-circuit').hidden=!!expanded?.instanceView||!(expanded||gateEditor);$('back-to-circuit').textContent=gateEditor&&!expanded?.libraryView?'保存并返回原电路':'返回原电路';
     for(const id of ['package','import','new','wire-mode','export-clear'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded||!!(gateEditor&&(b.dataset.deleteCustom||b.dataset.custom&&editingWouldRecurse(b.dataset.custom))));if(gateEditor)for(const id of ['import','new','export-clear'])$(id).disabled=true;
     $('node-layer').classList.toggle('read-only-view',!!expanded?.libraryView||!!expanded?.instanceView);
@@ -360,7 +368,7 @@
     const p=worldPoint(e);$('coords').textContent='X '+Math.round(p.x)+' · Y '+Math.round(p.y);if(!gesture)return;
     if(gesture.type==='marquee'){updateMarquee(p);}
     else if(gesture.type==='right-delete'){gesture.moved=gesture.moved||C.distance(localPoint(e),gesture.start)>6;}
-    else if(gesture.type==='pan'||gesture.type==='instance-node'||gesture.type==='wire-select'||gesture.type==='delay-inspect'){const q=localPoint(e);if(gesture.type==='instance-node'||gesture.type==='wire-select'||gesture.type==='delay-inspect')gesture.moved=gesture.moved||C.distance(q,gesture.start)>5;camera.x=gesture.camera.x+q.x-gesture.start.x;camera.y=gesture.camera.y+q.y-gesture.start.y;setCamera();}
+    else if(gesture.type==='pan'||gesture.type==='instance-node'||gesture.type==='wire-select'||gesture.type==='delay-inspect'){const q=localPoint(e);if(gesture.type==='instance-node'||gesture.type==='wire-select'||gesture.type==='delay-inspect')gesture.moved=gesture.moved||C.distance(q,gesture.start)>5;camera.x=gesture.camera.x+q.x-gesture.start.x;camera.y=gesture.camera.y+q.y-gesture.start.y;setCamera(true);}
     else if(gesture.type==='nodes'){moveGroup(p);}
     else if(gesture.type==='node'){const n=state.nodes.find(n=>n.id===gesture.id);if(!n)return;gesture.moved=gesture.moved||C.distance(p,gesture.start)*camera.scale>5;if(!gesture.moved)return;if(!gesture.before)gesture.before=snapshot();n.x=Math.round((gesture.x+p.x-gesture.start.x)/12)*12;n.y=Math.round((gesture.y+p.y-gesture.start.y)/12)*12;rerouteWires();sim=simulate(state);renderWires();renderNodes();}
     else {const s=snap(p);gesture.current=s.point;gesture.b=s.anchor;gesture.moved=C.distance(gesture.start,p)*camera.scale>6;const routed=C.route(gesture.a,s.anchor,state);$('draft-layer').innerHTML=routed?`<path class="draft" d="${path(routed)}"/>${s.snapped?`<circle class="snap-ring" cx="${s.point.x}" cy="${s.point.y}" r="10"/>`:''}`:'';}
@@ -388,7 +396,7 @@
   svg.addEventListener('click',e=>{if(expanded){if(expanded.view.compact&&e.target.closest('[data-expanded-scene]')){const hit=window.LogicExpanded.hitTest(expanded.view,worldPoint(e),6/camera.scale);if(hit)try{activateWire(hit);}catch(error){toast(error.message);}}else highlightExpanded(e.target);return;}const t=e.target.closest('[data-toggle]');if(t)toggle(t.dataset.toggle);});
   svg.addEventListener('keydown',e=>{if(expanded&&['Enter',' '].includes(e.key)&&e.target.closest('[data-expanded-net]')){e.preventDefault();e.stopPropagation();highlightExpanded(e.target);}});
   svg.addEventListener('keydown',e=>{const t=e.target.closest('[data-toggle]');if(t&&['Enter',' '].includes(e.key)){e.preventDefault();toggle(t.dataset.toggle);}});
-  svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e));},{passive:false});
+  svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e),true);},{passive:false});
   document.addEventListener('keydown',e=>{
     if(pastePreview){if(e.key==='Escape'){e.preventDefault();cancelPaste();}else if(!e.target.matches('input,select,textarea'))e.preventDefault();return;}
     if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
