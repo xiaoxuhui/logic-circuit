@@ -21,10 +21,16 @@ test('256-bit state stays exact; editing invalidates output and next-state rows'
 test('30000 NANDs and 2000 registers use sparse shared transition rows',()=>{
   const g=C.makeDefinition({nodes:[n('d','delay'),...Array.from({length:15},(_,i)=>n('n'+i,'nand'))],wires:[...Array.from({length:15},(_,i)=>[w('a'+i,i?'n'+(i-1):'d','n'+i),w('b'+i,i?'n'+(i-1):'d','n'+i,1)]).flat(),w('clock','n14','d')],definitions:{}},'单元'),defs={g};defs.h=C.makeDefinition({nodes:Array.from({length:100},(_,i)=>n('g'+i,'custom',{def:'g'})),wires:[],definitions:defs},'分组');defs.big=C.makeDefinition({nodes:Array.from({length:20},(_,i)=>n('h'+i,'custom',{def:'h'})),wires:[],definitions:defs},'大门');
   const s={version:1,nodes:[n('big','custom',{def:'big'})],wires:[],definitions:defs},run=C.createSimulator();assert.equal(C.definitionInfo('big',defs).stateBits,2000);assert.equal(C.definitionInfo('big',defs).cachedRows,0);run(s);assert.ok(run.stats.nodeEvaluations<200,'must not expand 30000 NANDs');assert.ok(run.stats.tableHits>0);assert.equal(C.definitionInfo('big',defs).cachedRows,1);
-  s.delayState=Object.fromEntries(Array.from({length:20},(_,h)=>Array.from({length:100},(_,g)=>['root/big/h'+h+'/g'+g+'/d',1])).flat());run(s);assert.ok(run.stats.nodeEvaluations<200);assert.equal(C.definitionInfo('big',defs).cachedRows,2);s.delayState={};run(s);assert.equal(run.stats.nodeEvaluations,1);assert.ok(run.stats.tableHits>0);const next=C.step(s);assert.equal(Object.keys(next).length,2000);assert.ok(Object.values(next).every(v=>v===1));
+  s.delayState=Object.fromEntries(Array.from({length:20},(_,h)=>Array.from({length:100},(_,g)=>['root/big/h'+h+'/g'+g+'/d',1])).flat());run(s);assert.ok(run.stats.nodeEvaluations<200);assert.equal(C.definitionInfo('big',defs).cachedRows,2);s.definitions=C.clone(s.definitions);assert.equal(C.definitionInfo('big',s.definitions).cachedRows,2);s.delayState={};run(s);assert.equal(run.stats.nodeEvaluations,1);assert.ok(run.stats.tableHits>0);const next=C.step(s);assert.equal(Object.keys(next).length,2000);assert.ok(Object.values(next).every(v=>v===1));
 });
 test('wide state rows keep cache memory bounded without changing transitions',()=>{
   const defs={g:C.makeDefinition({nodes:Array.from({length:40},(_,i)=>n('d'+i,'delay',{bits:256})),wires:[],definitions:{}},'宽状态')},s={nodes:[n('g','custom',{def:'g'})],wires:[],definitions:defs};
   for(let value=0;value<220;value++){s.delayState={'root/g/d0':value};C.simulate(s);}
   const info=C.definitionInfo('g',defs);assert.ok(info.cachedRows>0&&info.cachedRows<220);assert.ok(info.cachedBytes<=4*1024*1024);assert.ok(Object.values(C.step(s)).every(value=>value===0));
+});
+test('reusing a cloned library keeps rows while later edits cannot mutate old table sources',()=>{
+  const s=root({g:definition()}),saved=C.clone(s.definitions);C.step(s);const rows=C.definitionInfo('g',s.definitions).cachedRows;
+  s.definitions=C.clone(s.definitions);assert.equal(C.definitionInfo('g',s.definitions).cachedRows,rows);
+  s.definitions.g.wires=[];assert.deepEqual(C.step(s),referenceStep(s));
+  s.definitions=saved;s.delayState={'root/a/d':1,'root/a/e':1};assert.deepEqual(C.step(s),referenceStep(s));assert.equal(C.step(s)['root/a/d'],1);
 });

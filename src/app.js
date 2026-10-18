@@ -8,7 +8,7 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
-  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false;
+  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false,recoveryPending=false;
   const pasteLayer=document.createElementNS('http://www.w3.org/2000/svg','g');pasteLayer.setAttribute('class','paste-preview');pasteLayer.setAttribute('data-paste-preview','');pasteLayer.style.display='none';$('world').append(pasteLayer);
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -25,13 +25,14 @@
       while(items.length){if(writeStored(backupKey,JSON.stringify(items)))return true;items.pop();}
     }catch{}return false;
   }
-  function checkpoint(reason){
+  function checkpoint(reason,backupOnSuccess=true){
     clearTimeout(saveTimer);
     try{
       if(storageReadFailed)throw Error('原存档读取失败');
       const text=saveText();let previous;try{previous=localStorage.getItem('logic-workshop-v1');}catch{}
       const saved=unreadableSave===null?writeStored('logic-workshop-v1',text):previous===text;
-      const backed=backupText(text,saved?reason:'自动恢复备份',saved?undefined:previous);
+      const backed=(backupOnSuccess||!saved||recoveryPending)&&backupText(text,saved?reason:'自动恢复备份',saved?undefined:previous);
+      if(backed)recoveryPending=!saved;
       $('save-status').textContent=saved?'已保存到此浏览器':backed?'主存档保存失败，已自动备份':'保存和备份失败，请先导出存档';
       return saved||backed;
     }catch{$('save-status').textContent='保存失败，请留在本页并导出存档';return false;}
@@ -42,7 +43,7 @@
   function showBackups(){const items=readBackups();$('backup-list').innerHTML=items.length?items.map((item,i)=>{let detail='原始存档';try{const data=JSON.parse(item.text);detail=(data.nodes?.length||0)+' 个元件 · '+(data.wires?.length||0)+' 根导线 · '+Object.keys(data.definitions||{}).length+' 个自定义门';}catch{}return '<div class="backup-entry"><div><strong>'+escape(new Date(item.time).toLocaleString('zh-CN',{hour12:false}))+'</strong><small>'+escape(detail+' · '+item.reason)+'</small></div><button class="subtle" data-restore-backup="'+i+'">恢复</button></div>';}).join(''):'<p>还没有备份。刷新、关闭或删除时会自动备份。</p>';$('backup-error').textContent='';$('backup-dialog').showModal();}
   $('backups').onclick=showBackups;
   $('backup-list').onclick=e=>{const button=e.target.closest('[data-restore-backup]');if(!button)return;const item=readBackups()[Number(button.dataset.restoreBackup)];if(!item)return;try{C.validate(JSON.parse(item.text));backupText(saveText(),'恢复其他备份前');if(gesture||placement)throw Error('请先结束当前拖动操作');if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();}else while(expanded)returnToCircuit();importAllText(item.text);$('backup-dialog').close();}catch(error){$('backup-error').textContent=error.message;}};
-  function save(){if(unreadableSave!==null||storageReadFailed){$('save-status').textContent='原存档已保留，请先导出备份';return;}clearTimeout(saveTimer);saveTimer=setTimeout(()=>checkpoint('自动保存恢复点'),200);}
+  function save(){if(unreadableSave!==null||storageReadFailed){$('save-status').textContent='原存档已保留，请先导出备份';return;}clearTimeout(saveTimer);saveTimer=setTimeout(()=>checkpoint('自动保存恢复点',false),200);}
   function commit(before){
     const missing=(a,b)=>{const ids=new Set(b.map(item=>item.id));return a.some(item=>!ids.has(item.id));};
     const removed=missing(before.nodes,state.nodes)||missing(before.wires,state.wires)||Object.keys(before.definitions).some(id=>!state.definitions[id]||(!before.definitions[id].hidden&&state.definitions[id].hidden));
