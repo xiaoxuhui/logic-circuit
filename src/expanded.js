@@ -25,7 +25,8 @@
     return result;
   }
   function cacheView(key,view,scope,stats){
-    const template=rebase(view,scope,'root'),bytes=2*(key.length+JSON.stringify(template).length);if(bytes>MAX_CACHE_BYTES)return;
+    if(2*(key.length+view.svg.length)>MAX_CACHE_BYTES)return;
+    const bytes=2*(key.length+JSON.stringify(view).length);if(bytes>MAX_CACHE_BYTES)return;const template=rebase(view,scope,'root');
     while(templates.size>=MAX_CACHE_ENTRIES||templateBytes+bytes>MAX_CACHE_BYTES){const first=templates.keys().next().value;templateBytes-=templates.get(first).bytes;templates.delete(first);stats.evictions++;}
     templates.set(key,{view:template,bytes});templateBytes+=bytes;
   }
@@ -42,12 +43,12 @@
       const startTotal=total,startLeaves=leaves.length,startFrames=frames.length,startLayouts=layouts.length;
       const cacheKey=JSON.stringify([structure(local,boundaryPorts&&[boundaryPorts.name,boundaryPorts.inputs,boundaryPorts.outputs]),boundary,scope==='root',!!options.direct,!!options.readOnly,!!options.preserveLayout,options.debugNode,source.displayFormat||'unsigned',Object.entries(overrides).sort(([a],[b])=>a.localeCompare(b)),local.nodes.filter(n=>n.type==='input').map(n=>[n.id,overrides[n.id]===undefined?n.value||0:overrides[n.id]]),memories.get(scope)||[],forces.get(scope)||[],local.wireOverrides||{}]);
       const cached=templates.get(cacheKey);
-      if(cached){if(depth+cached.view.depthSpan>C.MAX_DEPTH)throw Error('展开层数超过限制');if(total+cached.view.count>5000)throw Error('展开后的元件过多，请先减少电路规模');templates.delete(cacheKey);templates.set(cacheKey,cached);stats.hits++;const view=rebase(cached.view,'root',scope);total+=view.count;leaves.push(...view.leaves);frames.push(...view.frames);layouts.push(...view.layouts);return view;}
+      if(cached){if(depth+cached.view.depthSpan>C.MAX_DEPTH)throw Error('展开层数超过限制');templates.delete(cacheKey);templates.set(cacheKey,cached);stats.hits++;const view=rebase(cached.view,'root',scope);total+=view.count;leaves.push(...view.leaves);frames.push(...view.frames);layouts.push(...view.layouts);return view;}
       stats.misses++;stats.circuitsBuilt++;let netCounter=0,depthSpan=0;
       const net=C.nets(local),sim=C.simulate(local,overrides,depth,{memory:source.delayState||{},scope,scopedOverrides:source.scopedWireOverrides||{}}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
-        if(++total>5000)throw Error('展开后的元件过多，请先减少电路规模');
+        total++;
         const s=C.spec(n,defs),label=(n.type==='input'?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.type==='custom'?defs[n.def].name:names[n.type]));
         if(n.type==='custom'&&!options.direct){
           const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=sim.portValues[C.key({node:n.id,dir:'in',port:i})]);

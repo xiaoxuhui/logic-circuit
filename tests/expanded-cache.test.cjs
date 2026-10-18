@@ -31,7 +31,6 @@ test('display cache is bounded and evicts rather than precomputing possible inpu
   for(let i=0;i<160;i++){s.nodes[0].value=i;const v=E.build(s);if(!i)first=v;const stats=E.getCacheStats();assert.ok(stats.entries<=stats.maxEntries);assert.ok(stats.bytes<=stats.maxBytes);assert.ok(stats.structureBytes<=stats.maxBytes);}
   assert.ok(E.getCacheStats().evictions>0);s.nodes[0].value=0;assert.deepEqual(E.build(s),first);assert.equal(E.getCacheStats().circuitsBuilt,1);
 });
-test('cached subtrees do not bypass the original expanded-node safety limit',()=>{
-  E.clearCache();const defs={g:C.makeDefinition({nodes:[n('i','input'),n('d','delay',240),n('o','output',480)],wires:[w('in','i','d'),w('out','d','o')],definitions:{}},'延迟')},s={nodes:Array.from({length:5000},(_,i)=>n('g'+i,'custom',i*10,0,{def:'g'})),wires:[],definitions:defs};
-  assert.throws(()=>E.build(s),/展开后的元件过多/);assert.ok(E.getCacheStats().hits>0);
+test('thirty thousand NANDs expand completely using cached subtrees without the old node cutoff',()=>{
+  E.clearCache();const source=require('./large-expansion-fixture.cjs')(),before=C.clone(source),view=E.build(source);assert.equal(C.countComponents(source).nand,30000);assert.equal(view.leaves.filter(n=>n.type==='nand').length,30000);assert.ok(view.count>30000);assert.ok(E.getCacheStats().hits>=99);assert.ok(E.getCacheStats().bytes<=E.getCacheStats().maxBytes);assert.deepEqual(source,before);assert.ok(!view.svg.includes('undefined'));
 });
