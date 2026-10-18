@@ -32,3 +32,20 @@ test('focused wide gate honors forced input and maps only its nested delay memor
   const inputBox=boxes.find(n=>n.id==='i'),offset={x:inputBox.x,y:inputBox.y};
   assert.deepEqual(view.layouts[0].routes.find(r=>r.ports.some(p=>p.node==='i')).paths,[C.points(definitions.h.wires[0],{...definitions.h,definitions}).map(p=>({x:p.x+offset.x,y:p.y+offset.y}))]);
 });
+
+test('nested focus carries each level input and delay memory through three levels',()=>{
+ const definitions={g:gate(16)};
+ for(const [id,child] of [['h','g'],['j','h']])definitions[id]=C.makeDefinition(circuit([node('i','input',0,{bits:16}),node('sub','custom',240,{def:child}),node('o','output',480,{bits:16})],[wire('a','i','sub'),wire('b','sub','o')],definitions),id);
+ const s=circuit([node('i','input',0,{bits:16,value:32769}),node('a','custom',240,{def:'j'}),node('b','custom',480,{def:'j'})],[wire('x','i','a')],definitions);
+ s.delayState={'root/a/sub/sub/d':513,'root/b/sub/sub/d':42};const before=C.clone(s);
+ for(const [id,input,delay] of [['a','32769','513'],['b','0','42']]){
+  let view=E.focus(s,id);
+  for(let depth=1;depth<=3;depth++){
+   assert.equal(C.decimal(view.leaves.find(n=>n.id==='i').values[0]),input);
+   assert.equal(C.decimal(view.leaves.find(n=>n.id==='o').output),delay);
+   if(depth<3)view=E.focus(view.source,'sub');
+  }
+  assert.equal(view.source.delayState['root/d'],Number(delay));
+ }
+ assert.deepEqual(s,before);
+});

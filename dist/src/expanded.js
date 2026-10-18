@@ -78,7 +78,8 @@
     definition.inputs.forEach((port,i)=>{nodes.find(n=>n.id===port.id).value=C.packBits(sim.portValues[C.key({node:nodeId,dir:'in',port:i})]);});
     const prefix='root/'+nodeId+'/',memory={};
     for(const [path,value] of Object.entries(source.delayState||{}))if(path.startsWith(prefix))memory['root/'+path.slice(prefix.length)]=value;
-    return build({nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat},{readOnly:true,direct:true,preserveLayout:true});
+    const captured={nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat};
+    return {...build(captured,{readOnly:true,direct:true,preserveLayout:true}),source:captured};
   }
   return {build,focus};
 });
