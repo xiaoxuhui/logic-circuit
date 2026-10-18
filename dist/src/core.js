@@ -117,13 +117,16 @@
     for(const p of allPorts)for(const {i,p:e} of free)if(distance(e,p)<0.05){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
     return {groups,portNet,wireNet};
   }
-  const tableCache=new WeakMap();
+  const tableCache=new WeakMap(),sharedTableCache=new Map();
   function compiledTables(defs){
     const signature=JSON.stringify(defs),cached=tableCache.get(defs);
     if(cached?.signature===signature)return cached.tables;
-    const tables=new Map();tableCache.set(defs,{signature,tables});return tables;
+    let tables=sharedTableCache.get(signature);
+    if(!tables){tables=new Map();tables.definitions=JSON.parse(signature);if(sharedTableCache.size>=4)sharedTableCache.delete(sharedTableCache.keys().next().value);sharedTableCache.set(signature,tables);}
+    tableCache.set(defs,{signature,tables});return tables;
   }
   function tableFor(id,defs,tables,visiting=new Set()){
+    defs=tables.definitions||defs;
     if(tables.has(id))return tables.get(id);
     const reject=reason=>{const result={eligible:false,reason};tables.set(id,result);return result;};
     if(visiting.has(id))return reject('循环依赖');
@@ -163,11 +166,12 @@
     let signature=null,session;
     const run=state=>{
       const next=JSON.stringify(state.definitions||{});
-      if(next!==signature){signature=next;session={topologies:new Map(),results:new Map()};}
+      if(next!==signature){signature=next;session={topologies:new Map(),results:new Map(),tables:compiledTables(state.definitions||{})};}
+      if(state.definitions)tableCache.set(state.definitions,{signature,tables:session.tables});
       run.stats={topologyBuilds:0,cacheHits:0,nodeEvaluations:0,tableHits:0,tableMisses:0,scopes:[]};
       const memory=state.delayState||{},memories=new Map();
       for(const [path,value] of Object.entries(memory)){const parts=path.split('/');for(let i=1;i<parts.length;i++){const scope=parts.slice(0,i).join('/');if(!memories.has(scope))memories.set(scope,[]);memories.get(scope).push([path.slice(scope.length),value]);}}
-      return simulate(state,{},0,{memory,scope:'root',session,memories,stats:run.stats});
+      return simulate(state,{},0,{memory,scope:'root',session,memories,stats:run.stats,tables:session.tables});
     };
     run.stats={};return run;
   }
