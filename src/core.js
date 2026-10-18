@@ -247,6 +247,22 @@
   }
   // Every transition row is sampled from the same old register values.
   function step(state){return simulate(state,{},0,{memory:state.delayState||{},scope:'root',captureNext:true}).nextDelayState;}
+  function resetDelays(state,mode='all',visible=null){
+    if(mode==='all')return {};
+    if(mode!=='partial')throw Error('未知清零模式');
+    const defs=state.definitions||{},counts=new Map(),visiting=new Set(),exact=new Set(),subtrees=new Set();
+    // Only 0, 1 or more-than-1 matters. Count definitions once, not expanded instances.
+    function count(id){
+      if(counts.has(id))return counts.get(id);if(visiting.has(id))throw Error('自定义门循环依赖');
+      const d=defs[id];if(!d)throw Error('自定义门不存在');visiting.add(id);let total=0;
+      for(const n of d.nodes){if(n.type==='delay')total++;else if(n.type==='custom')total+=count(n.def);if(total>1){total=2;break;}}
+      visiting.delete(id);counts.set(id,total);return total;
+    }
+    for(const n of visible||state.nodes){const path=(n.scope||'root')+'/'+n.id;if(n.type==='delay')exact.add(path);else if(n.type==='custom'&&count(n.def)===1)subtrees.add(path);}
+    return Object.fromEntries(Object.entries(state.delayState||{}).filter(([path])=>{
+      if(exact.has(path))return false;for(let i=path.indexOf('/',5);i>=0;i=path.indexOf('/',i+1))if(subtrees.has(path.slice(0,i)))return false;return true;
+    }));
+  }
   function countComponents(state){
     // Cache one definition's composition, then add it again for EVERY placed instance.
     const memo=new Map(),visiting=new Set(),defs=state.definitions||{};
@@ -338,5 +354,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,step,resetDelays,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });

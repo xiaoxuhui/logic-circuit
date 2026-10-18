@@ -4,7 +4,7 @@
   const names={nand:'与非门',delay:'延迟线',input:'输入开关',output:'输出指示灯',hub:'集线器',splitter:'分线器'};
   const formatNames={unsigned:'无符号十进制',signed:'有符号十进制',hex:'十六进制'};
   const subtitles={nand:'NAND',delay:'ONE STEP DELAY',input:'SIGNAL INPUT',output:'SIGNAL OUTPUT',hub:'BUS PACK',splitter:'BUS UNPACK'};
-  const desc={delay:'先接收输入，下一步运行时才输出。点击“延迟线清零”后，所有延迟线输出为 0。',nand:'两个输入都是 1 时，输出为 0。',input:'点击开关，给电路一个 0 或 1。',output:'实时显示输入端的信号。',hub:'顶部为最低位 b0，按位打包为总线。',splitter:'将总线拆为单比特，顶部为最低位 b0。',custom:'你封装的电路，拥有独立的内部逻辑。'};
+  const desc={delay:'先接收输入，下一步运行时才输出。点击“全部清零”后，所有延迟线输出为 0。',nand:'两个输入都是 1 时，输出为 0。',input:'点击开关，给电路一个 0 或 1。',output:'实时显示输入端的信号。',hub:'顶部为最低位 b0，按位打包为总线。',splitter:'将总线拆为单比特，顶部为最低位 b0。',custom:'你封装的电路，拥有独立的内部逻辑。'};
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
@@ -175,7 +175,8 @@
   $('next-step').onclick=()=>{stopRunning();advance(true);};
   $('auto-run').onclick=()=>runTimer?stopRunning():startRunning();
   $('run-speed').onchange=()=>{const running=!!runTimer;$('run-speed').value=Math.max(.1,Math.min(60,Number($('run-speed').value)||1));if(running)startRunning();};
-  $('reset-simulation').onclick=()=>{if(expanded?.libraryView||expanded?.instanceView)return;stopRunning();const before=snapshot();state.delayState={};if(expanded)expanded.view=window.LogicExpanded.build(snapshot(),{debugNode:expanded.debugNode});if(expanded?.libraryId){render();save();}else commit(before);};
+  function resetSimulation(mode){if(expanded?.libraryView||expanded?.instanceView)return;stopRunning();const before=snapshot();state.delayState=C.resetDelays(state,mode,expanded?expanded.view.leaves:null);if(expanded)refreshExpanded();if(expanded?.libraryId){render();save();}else commit(before);}
+  $('reset-simulation').onclick=()=>resetSimulation('all');$('reset-partial').onclick=()=>resetSimulation('partial');
   function renderSelection(){
     const ids=new Set(selected?.type==='nodes'?selected.ids:selected?.type==='node'?[selected.id]:[]);
     svg.querySelectorAll('[data-node]').forEach(el=>el.classList.toggle('selected',ids.has(el.dataset.node)));
@@ -188,7 +189,7 @@
     $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;$('rotate').disabled=!!expanded||!['node','nodes'].includes(selected?.type);$('debug').disabled=!!expanded||selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);$('exit-gate').hidden=!expanded?.instanceView;$('back-to-circuit').hidden=!!expanded?.instanceView||!(expanded||gateEditor);$('back-to-circuit').textContent=gateEditor&&!expanded?.libraryView?'保存并返回原电路':'返回原电路';
     for(const id of ['package','import','new','wire-mode','export-clear'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded||!!(gateEditor&&(b.dataset.deleteCustom||b.dataset.custom&&editingWouldRecurse(b.dataset.custom))));if(gateEditor)for(const id of ['import','new','export-clear'])$(id).disabled=true;
     $('node-layer').classList.toggle('read-only-view',!!expanded?.libraryView||!!expanded?.instanceView);
-    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation'])$(id).disabled=(!!expanded?.libraryView||!!expanded?.instanceView)&&(id!=='next-step'||!hasWireForces());
+    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation','reset-partial'])$(id).disabled=(!!expanded?.libraryView||!!expanded?.instanceView)&&(id!=='next-step'||!hasWireForces());
     $('expand').disabled=!!gateEditor||!expanded&&!state.nodes.some(n=>n.type==='custom');$('expand').textContent=expanded?'全部收回':'全部展开';$('expand').setAttribute('aria-pressed',String(!!expanded));
     $('onboarding').hidden=!!gateEditor||!!expanded||!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
     $('node-count').textContent=gateEditor?(expanded?.libraryView?'查看：':'编辑：')+state.definitions[gateEditor.id].name+' · '+state.nodes.length+' 个元件':expanded?expanded.view.leaves.length+' 个原始元件 · 调试':state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
