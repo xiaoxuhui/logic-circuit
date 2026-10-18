@@ -42,7 +42,8 @@
       let x=0,height=top+80,offset={x:0,y:0};
       if(options.preserveLayout){
         const points=local.wires.flatMap(w=>C.points(w,local));
-        offset={x:32-Math.min(0,...local.nodes.map(n=>n.x),...points.map(p=>p.x)),y:32-Math.min(0,...local.nodes.map(n=>n.y),...points.map(p=>p.y))};
+        const bounds=[...local.nodes,...points],min=bounds.reduce((p,q)=>({x:Math.min(p.x,q.x),y:Math.min(p.y,q.y)}),{x:Infinity,y:Infinity});
+        offset={x:32-(Number.isFinite(min.x)?min.x:0),y:32-(Number.isFinite(min.y)?min.y:0)};
         for(const item of items.values()){item.x=item.n.x+offset.x;item.y=item.n.y+offset.y;item.inLanes=item.ins.map(p=>item.x+p.x);item.outLanes=item.outs.map(p=>item.x+p.x);}
         x=Math.max(200,...[...items.values()].map(i=>i.x+i.w+32),...points.map(p=>p.x+offset.x+32));
         height=Math.max(120,...[...items.values()].map(i=>i.y+i.h+52),...points.map(p=>p.y+offset.y+32));

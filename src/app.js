@@ -30,7 +30,7 @@
   }
   function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2}){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera();save();}
   function fit(initialView=false){
-    if(expanded){const view=expanded.view,fitted=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-180)/view.h)),scale=initialView?Math.max(.8,fitted):fitted;camera={x:initialView?40:(svg.clientWidth-view.w*scale)/2,y:initialView?140:100+(svg.clientHeight-180-view.h*scale)/2,scale};setCamera();save();return;}
+    if(expanded){const view=expanded.view,top=expanded.instanceView?180:100,bottom=expanded.instanceView?140:80,fitted=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-top-bottom)/view.h)),scale=initialView?Math.max(.8,fitted):fitted;camera={x:initialView?40:(svg.clientWidth-view.w*scale)/2,y:initialView?140:top+(svg.clientHeight-top-bottom-view.h*scale)/2,scale};setCamera();save();return;}
     if(!state.nodes.length){camera={x:svg.clientWidth/2,y:svg.clientHeight/2,scale:1};setCamera();return;}
     const boxes=state.nodes.map(n=>({...n,...C.size(n,state.definitions)})),ps=state.wires.flatMap(w=>C.points(w,state));
     const minX=Math.min(...boxes.map(b=>b.x),...ps.map(p=>p.x)),maxX=Math.max(...boxes.map(b=>b.x+b.w),...ps.map(p=>p.x));
@@ -129,7 +129,7 @@
   function toggleExpanded(){if(expanded)returnToCircuit();else enterExpanded();}
   function enterGateView(id){
     if(expanded||gateEditor||gesture||placement)return;
-    try{stopRunning();const view=window.LogicExpanded.focus(snapshot(),id);expanded={view,debugNode:id,instanceView:true,camera:{...camera},mode};selected=null;setMode('pan');render();fit(true);}catch(error){toast(error.message);}
+    try{stopRunning();const view=window.LogicExpanded.focus(snapshot(),id);expanded={view,debugNode:id,instanceView:true,camera:{...camera},mode};selected=null;setMode('pan');render();fit();}catch(error){toast(error.message);}
   }
   function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
   function previewPlacement(e){
