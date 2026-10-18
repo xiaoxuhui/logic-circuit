@@ -39,3 +39,5 @@ button{touch-action:manipulation}.binary-input{box-sizing:border-box;width:86px;
 .component-counts{flex-wrap:wrap;max-width:calc(100% - 46px);box-sizing:border-box}.component-counts>span{white-space:nowrap}@media(max-width:600px){.component-counts{max-width:calc(100% - 24px);gap:8px 14px}}
 
 .forced-wire-label{fill:#f0d28d;font:11px ui-monospace,monospace;paint-order:stroke;stroke:#10181e;stroke-width:4;pointer-events:none}#wire-force-value{min-width:0}#wire-force-error{font-size:10px;line-height:1.6}
+
+.backup-entry{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid #34444e}.backup-entry strong{font-size:13px}.backup-entry small{display:block;margin-top:6px;color:#9ab1bd;font-size:11px;line-height:1.6}#backup-list{max-height:50vh;overflow:auto}.backup-entry button{flex-shrink:0}

@@ -16,7 +16,8 @@
   "license": "MIT",
   "storageContract": "logic-circuit-dynamic-v1",
   "storageKeys": [
-    "logic-workshop-v1"
+    "logic-workshop-v1",
+    "logic-workshop-refresh-backups-v1"
   ],
   "minHostVersionCode": 4,
   "resourceProtocol": 2,
