@@ -294,7 +294,7 @@
     if(g.type==='nodes'){if(cancel)state=g.before;else if(g.moved){suppressCanvasClickUntil=Date.now()+100;commit(g.before);}render();return;}
     if(g.type==='node'){if(g.moved){if(cancel)state=g.before;else commit(g.before);render();}else renderSelection();const n=state.nodes.find(n=>n.id===g.id);if(!cancel&&!g.moved&&n?.type==='custom'&&!gateEditor){suppressCanvasClickUntil=Date.now()+100;enterGateView(n.id);}else if(!cancel&&!g.moved&&n&&['hub','splitter'].includes(n.type))openBusDialog(n);return;}
     if(cancel)return;
-    if(g.moved){if(state.wires.length>=1500)return toast('当前画布已达 1500 根导线');const b=g.b||snap(worldPoint(e)).anchor;if(JSON.stringify(g.a)===JSON.stringify(b))return;const routed=C.route(g.a,b,state);if(!routed)return toast('找不到不重叠的路径，请调整位置或从现有导线上分支');change(()=>{const w={id:uid('w'),a:g.a,b,via:routed.slice(1,-1),autoRoute:true};state.wires.push(w);selected={type:'wire',id:w.id};});if(sim.issues.length)toast(sim.issues[0]);}
+    if(g.moved){if(state.wires.length>=1500)return toast('当前画布已达 1500 根导线');const b=g.b||snap(worldPoint(e)).anchor;if(JSON.stringify(g.a)===JSON.stringify(b))return;const routed=C.route(g.a,b,state);if(!routed)return toast('找不到避开逻辑门的路径，请调整元件位置');change(()=>{const w={id:uid('w'),a:g.a,b,via:routed.slice(1,-1),autoRoute:true};state.wires.push(w);selected={type:'wire',id:w.id};});if(sim.issues.length)toast(sim.issues[0]);}
     else {selected=g.wire?{type:'wire',id:g.wire}:null;renderSelection();}
   }
   svg.addEventListener('pointerup',e=>finish(e));svg.addEventListener('pointercancel',e=>finish(e,true));

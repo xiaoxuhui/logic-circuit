@@ -17,8 +17,10 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
     console.log('PASS overlap: eight drawn fanouts share points only, avoid gates, signals and undo/redo');
 
     const blocked={version:1,nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]};
-    await load(blocked);const before=await get();await drag(await xy({x:0,y:0}),await xy({x:200,y:200}));assert.equal(await page.locator('.draft').count(),0);await page.mouse.up();assert.deepEqual((await get()).wires,before.wires);assert.match(await page.locator('#toast').textContent(),/找不到不重叠/);
-    console.log('PASS overlap: impossible route neither draws nor commits an invalid path');
+    await load(blocked);const before=await get();await drag(await xy({x:0,y:0}),await xy({x:200,y:200}));const preview=await page.locator('.draft').getAttribute('d');assert.ok(preview);await page.mouse.up();let added=(await get()).wires.at(-1);assert.equal((await get()).wires.length,before.wires.length+1);assert.ok(C.wireOverlaps(added,await get()));assert.equal(await page.locator('[data-wire="'+added.id+'"] .wire-line').getAttribute('d'),preview);await page.keyboard.press('Control+z');assert.deepEqual((await get()).wires,before.wires);await page.keyboard.press('Control+Shift+z');assert.deepEqual((await get()).wires.at(-1),added);
+    console.log('PASS overlap: least-overlap fallback preview matches saved wire, undo/redo preserved');
+    await load({version:1,definitions:{},wires:[],nodes:[{id:'block',type:'nand',x:0,y:0}]});const noPath=await get();await drag(await xy({x:-100,y:200}),await xy({x:76,y:40}));assert.equal(await page.locator('.draft').count(),0);await page.mouse.up();assert.deepEqual((await get()).wires,noPath.wires);assert.deepEqual((await get()).nodes,noPath.nodes);assert.match(await page.locator('#toast').textContent(),/避开逻辑门/);
+    console.log('PASS overlap: soft overlap still never permits a gate-body endpoint');
 
     const legacy=C.clone(fan);legacy.wires=legacy.nodes.slice(1).map((n,i)=>({id:'old'+i,a:{node:'i',dir:'out',port:0},b:{node:n.id,dir:'in',port:0},autoRoute:true}));
     assert.ok(legacy.wires.some(w=>C.wireOverlaps(w,legacy)));await load(legacy);await page.waitForTimeout(300);await page.reload();let s=await get();valid(s);assert.deepEqual(s.nodes,legacy.nodes);assert.deepEqual(Object.values(await page.evaluate(()=>LogicApp.getSimulation().outputs)),Array.from({length:8},()=>[1]));

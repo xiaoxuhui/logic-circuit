@@ -2,9 +2,19 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),C=require
 const state=rotation=>({version:1,nodes:[{id:'a',type:'input',x:0,y:0,value:1},{id:'block',type:'nand',x:280,y:-20,rotation},{id:'o',type:'output',x:600,y:0}],wires:[],definitions:{}});
 const sharesLength=(p,q,r,t)=>{const u={x:q.x-p.x,y:q.y-p.y},v={x:t.x-r.x,y:t.y-r.y},len=Math.hypot(u.x,u.y);if(!len||!Math.hypot(v.x,v.y)||Math.abs(u.x*v.y-u.y*v.x)>1e-8||Math.abs((r.x-p.x)*u.y-(r.y-p.y)*u.x)>1e-8)return false;const dot=z=>((z.x-p.x)*u.x+(z.y-p.y)*u.y)/len;return Math.min(len,Math.max(dot(r),dot(t)))-Math.max(0,Math.min(dot(r),dot(t)))>1e-8;};
 function noOverlap(route,s){for(const w of s.wires){const old=C.points(w,s);for(let i=1;i<route.length;i++)for(let j=1;j<old.length;j++)assert.ok(!sharesLength(route[i-1],route[i],old[j-1],old[j]),'positive-length overlap with '+w.id);}}
-test('an occupied four-way junction never falls back to overlapping an old segment',()=>{
+test('an occupied four-way junction chooses a safe least-overlap fallback',()=>{
   const s={nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]},before=C.clone(s);
-  assert.equal(C.route({x:0,y:0},{x:200,y:200},s),null);assert.deepEqual(s,before);
+  assert.ok(C.route({x:0,y:0},{x:200,y:200},s));assert.deepEqual(s,before);
+});
+function repeated(route,s){let last=new Set(),count=0,length=0;for(let i=1;i<route.length;i++){const p=route[i-1],q=route[i],len=C.distance(p,q);if(!len)continue;const hit=new Set();for(const w of s.wires){const ps=C.points(w,s);for(let j=1;j<ps.length;j++)if(sharesLength(p,q,ps[j-1],ps[j])){hit.add(w.id);const dot=r=>((r.x-p.x)*(q.x-p.x)+(r.y-p.y)*(q.y-p.y))/len;length+=Math.min(len,Math.max(dot(ps[j-1]),dot(ps[j])))-Math.max(0,Math.min(dot(ps[j-1]),dot(ps[j])));}}for(const id of hit)if(!last.has(id))count++;last=hit;}return {count,length};}
+test('fallback prefers one longer overlap over three shorter overlaps',()=>{
+  const s={nodes:[],definitions:{},wires:[...Array.from({length:3},(_,i)=>({id:'h'+i,a:{x:-100,y:0},b:{x:2,y:0}})),{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]},route=C.route({x:0,y:0},{x:200,y:200},s);assert.ok(route);assert.equal(repeated(route,s).count,1);assert.equal(route[1].x,0);assert.ok(route[1].y>0);
+});
+test('equal overlap counts prefer shorter overlapping length and do not count grid splits twice',()=>{
+  const s={nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:2,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]},route=C.route({x:0,y:0},{x:200,y:200},s);assert.ok(route);assert.deepEqual(repeated(route,s),{count:1,length:2});
+});
+test('overlap fallback cannot escape through a gate body',()=>{
+  const s={nodes:[{id:'block',type:'nand',x:-40,y:-40}],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]};assert.equal(C.route({x:0,y:0},{x:200,y:200},s),null);
 });
 test('crowded port fanout uses distinct exits without overlap or mutation',()=>{
   const s={version:1,nodes:[{id:'i',type:'input',x:0,y:0,value:1},...Array.from({length:5},(_,i)=>({id:'o'+i,type:'output',x:600,y:i*120}))],definitions:{},wires:[]},a={node:'i',dir:'out',port:0};let accepted=0,refused=0;

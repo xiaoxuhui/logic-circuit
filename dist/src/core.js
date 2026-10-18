@@ -37,6 +37,33 @@
   function segmentHitsBox(p,q,r){let low=0,high=1;for(const [axis,extent] of [['x','w'],['y','h']]){const delta=q[axis]-p[axis],min=r[axis]+1e-7,max=r[axis]+r[extent]-1e-7;if(!delta){if(p[axis]<=min||p[axis]>=max)return false;}else{const a=(min-p[axis])/delta,b=(max-p[axis])/delta;low=Math.max(low,Math.min(a,b));high=Math.min(high,Math.max(a,b));if(low>=high)return false;}}return low<high;}
   function wireOverlaps(w,state){const ps=points(w,state);return state.wires.some(other=>other.id!==w.id&&points(other,state).slice(1).some((q,i,tail)=>{const p=i?tail[i-1]:anchor(other.a,state);return ps.slice(1).some((b,j)=>segmentsOverlap(ps[j],b,p,q));}));}
   function wireHitsGate(w,state){const ps=points(w,state);return state.nodes.some(n=>{const box={...n,...size(n,state.definitions)};return ps.slice(1).some((q,i)=>segmentHitsBox(ps[i],q,box));});}
+  function leastOverlapRoute(aEnd,bEnd,state,ignoreWire){
+    const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-8,y:n.y-8,w:size(n,state.definitions).w+16,h:size(n,state.definitions).h+16}));
+    const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap((w,id)=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b,id}));}),edgeCache=new Map();
+    const clear=(p,q,owner=null)=>!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
+    const exits=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;return [[p,{x:p.x+dx*20,y:p.y+dy*20}],...[-20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*20,y:q.y+dy*20}];})].filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));};
+    const starts=exits(aEnd,a),ends=exits(bEnd,b);if(!starts.length||!ends.length)return null;
+    const edge=(p,q)=>{const k=p.x+','+p.y+'>'+q.x+','+q.y;if(edgeCache.has(k))return edgeCache.get(k);const length=distance(p,q),ranges=[];if(length)for(const s of segments)if(segmentsOverlap(p,q,s.a,s.b)){const dot=r=>((r.x-p.x)*(q.x-p.x)+(r.y-p.y)*(q.y-p.y))/length;ranges.push({id:s.id,low:Math.max(0,Math.min(dot(s.a),dot(s.b))),high:Math.min(length,Math.max(dot(s.a),dot(s.b)))});}const stops=[...new Set([0,length,...ranges.flatMap(r=>[r.low,r.high])])].sort((a,b)=>a-b),sections=stops.slice(1).map((stop,i)=>({length:stop-stops[i],ids:new Set(ranges.filter(r=>r.low<(stops[i]+stop)/2&&r.high>(stops[i]+stop)/2).map(r=>r.id))}));const result={sections,length};edgeCache.set(k,result);return result;};
+    const advance=(ps,previous={ids:new Set(),repeats:0,shared:0,length:0})=>{let {ids,repeats,shared,length}=previous;for(let i=1;i<ps.length;i++){const e=edge(ps[i-1],ps[i]);if(!e.length)continue;for(const section of e.sections){for(const id of section.ids)if(!ids.has(id))repeats++;ids=section.ids;shared+=section.length*ids.size;}length+=e.length;}return {ids,repeats,shared,length};};
+    const compare=(p,q)=>p.repeats-q.repeats||p.shared-q.shared||p.priority-q.priority,better=(p,q)=>!q||compare({...p,priority:p.length},{...q,priority:q.length})<0;
+    const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if(u.x===v.x&&v.x===p.x&&(v.y-u.y)*(p.y-v.y)>=0||u.y===v.y&&v.y===p.y&&(v.x-u.x)*(p.x-v.x)>=0)out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
+    const valid=ps=>{for(let i=1;i<ps.length;i++){if(state.nodes.some(n=>segmentHitsBox(ps[i-1],ps[i],{...n,...size(n,state.definitions)})))return false;for(let j=1;j<i;j++)if(segmentsOverlap(ps[i-1],ps[i],ps[j-1],ps[j]))return false;}return true;};
+    const coords=[...starts,...ends].flat(),X=[...new Set([...coords.flatMap(p=>[p.x-12,p.x,p.x+12]),...boxes.flatMap(r=>[r.x-12,r.x+r.w+12]),...segments.flatMap(s=>[s.a.x-12,s.a.x,s.a.x+12,s.b.x-12,s.b.x,s.b.x+12])])].sort((x,y)=>x-y),Y=[...new Set([...coords.flatMap(p=>[p.y-12,p.y,p.y+12]),...boxes.flatMap(r=>[r.y-12,r.y+r.h+12]),...segments.flatMap(s=>[s.a.y-12,s.a.y,s.a.y+12,s.b.y-12,s.b.y,s.b.y+12])])].sort((x,y)=>x-y),width=X.length,index=p=>Y.indexOf(p.y)*width+X.indexOf(p.x),goals=new Map(ends.map(ps=>[index(ps.at(-1)),ps]));
+    let bestPath=null,bestScore=null;const consider=ps=>{ps=clean(ps);if(!valid(ps))return;const score=advance(ps);if(better(score,bestScore)){bestPath=ps;bestScore={...score,priority:score.length};}};
+    // Keep a safe incumbent if the bounded search reaches its work budget.
+    for(const start of starts)for(const end of ends){const A=start.at(-1),B=end.at(-1),candidates=[[A,{x:B.x,y:A.y},B],[A,{x:A.x,y:B.y},B]];for(const x of [X[0],X.at(-1)])candidates.push([A,{x,y:A.y},{x,y:B.y},B]);for(const y of [Y[0],Y.at(-1)])candidates.push([A,{x:A.x,y},{x:B.x,y},B]);for(const ps of candidates)if(ps.slice(1).every((q,i)=>clear(ps[i],q)))consider([...start,...ps,...end.slice().reverse()]);}
+    const heap=[],best=new Map(),estimate=p=>Math.abs(p.x-b.x)+Math.abs(p.y-b.y);
+    const push=item=>{let i=heap.length;heap.push(item);while(i){const p=(i-1)>>1;if(compare(heap[p],item)<=0)break;heap[i]=heap[p];i=p;}heap[i]=item;};
+    const pop=()=>{const first=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let c=i*2+1;if(c+1<heap.length&&compare(heap[c+1],heap[c])<0)c++;if(compare(last,heap[c])<=0)break;heap[i]=heap[c];i=c;}heap[i]=last;}return first;};
+    starts.forEach((ps,i)=>{const p=ps.at(-1),id=index(p),score=advance(ps),record={...score,id,p,key:id+':s'+i,previous:null,source:ps,priority:score.length+estimate(p)};best.set(record.key,record);push(record);});
+    for(let visited=0;heap.length&&visited<20000;visited++){
+      const current=pop();if(best.get(current.key)!==current)continue;if(bestScore&&compare(current,bestScore)>=0)return bestPath;
+      if(goals.has(current.id)){const tail=[];let root=current;for(let r=current;r;r=r.previous){tail.push(r.p);root=r;}consider([...root.source,...tail.reverse().slice(1),...goals.get(current.id).slice().reverse().slice(1)]);}
+      const x=current.id%width,y=Math.floor(current.id/width);
+      for(const [dir,[nx,ny]] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].entries()){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const p={x:X[nx],y:Y[ny]};if(!clear(current.p,p))continue;const id=ny*width+nx,key=id+':'+dir,score=advance([current.p,p],current),old=best.get(key);if(!better(score,old))continue;const record={...score,id,p,key,previous:current,priority:score.length+estimate(p)};best.set(key,record);push(record);}
+    }
+    return bestPath;
+  }
   function route(aEnd,bEnd,state,ignoreWire=null){
     const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-8,y:n.y-8,w:size(n,state.definitions).w+16,h:size(n,state.definitions).h+16}));
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap(w=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b}));});
@@ -47,7 +74,7 @@
       // Short distinct angled exits keep dense fanout connected without shared strokes.
       for(let offset=1;offset<=256&&usable.length<4;offset++)for(const sign of [-1,1]){const q={x:p.x+dx*20-dy*offset*sign,y:p.y+dy*20+dx*offset*sign};if(clear(p,q,end.node))usable.push([p,q]);}return usable;
     };
-    const starts=leads(aEnd,a),ends=leads(bEnd,b);if(!starts.length||!ends.length)return null;
+    const starts=leads(aEnd,a),ends=leads(bEnd,b);if(!starts.length||!ends.length)return leastOverlapRoute(aEnd,bEnd,state,ignoreWire);
     const A=starts[0].at(-1),B=ends[0].at(-1);
     const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if((u.x===v.x&&v.x===p.x&&(v.y-u.y)*(p.y-v.y)>=0)||(u.y===v.y&&v.y===p.y&&(v.x-u.x)*(p.x-v.x)>=0))out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
     const complete=(start,ps,end)=>{const result=clean([...start,...ps,...end.slice().reverse()]);for(let i=1;i<result.length;i++){if(segments.some(s=>overlap(result[i-1],result[i],s.a,s.b)))return null;for(let j=1;j<i;j++)if(overlap(result[i-1],result[i],result[j-1],result[j]))return null;}return result;};
@@ -68,7 +95,7 @@
       if(goals.has(id)){const ps=[];let start=id;for(let k=id;k!==null;k=prev.get(k)){start=k;ps.push({x:X[k%width],y:Y[Math.floor(k/width)]});}const result=complete(origins.get(start),ps.reverse(),goals.get(id));if(result)return result;}
       for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const next=ny*width+nx,q={x:X[nx],y:Y[ny]},ng=g+Math.abs(p.x-q.x)+Math.abs(p.y-q.y);if(ng<(cost.get(next)??Infinity)&&clear(p,q)){cost.set(next,ng);prev.set(next,id);push({id:next,g:ng,f:ng+estimate(q)});}}
     }
-    return null;
+    return leastOverlapRoute(aEnd,bEnd,state,ignoreWire);
   }
   function project(p,a,b){const dx=b.x-a.x,dy=b.y-a.y,t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));return {x:a.x+t*dx,y:a.y+t*dy};}
   const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
