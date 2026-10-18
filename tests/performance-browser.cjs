@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),path=require('node:path'),{large}=require('./fixtures/large-circuit.cjs');let pw;try{pw=require('playwright');}catch{pw=require(path.resolve(path.dirname(process.execPath),'../node_modules/playwright'));}
+process.env.PORT='0';const server=require('../scripts/serve.cjs');
+(async()=>{if(!server.listening)await new Promise(r=>server.once('listening',r));const browser=await pw.chromium.launch({headless:true});try{
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+server.address().port);
+ const s=large();await page.locator('#file-input').setInputFiles({name:'large.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(s))});await page.waitForFunction(()=>LogicApp.getState().definitions.h);await page.waitForTimeout(220);
+ assert.equal(await page.locator('#nand-count').textContent(),'3000');assert.equal(await page.locator('#delay-count').textContent(),'100');
+ await page.evaluate(()=>{window.stableNode=document.querySelector('[data-node=i]');window.beforePerformance=JSON.stringify(LogicApp.getPerformance());});
+ await page.locator('[data-node=o]').click();assert.equal(await page.evaluate(()=>window.stableNode===document.querySelector('[data-node=i]')),true);assert.equal(await page.evaluate(()=>JSON.stringify(LogicApp.getPerformance())===window.beforePerformance),true);
+ await page.locator('[data-node=i] [data-toggle]').click();assert.equal(await page.locator('#nand-count').textContent(),'3000');let stats=await page.evaluate(()=>LogicApp.getPerformance());assert.deepEqual(stats.simulation.scopes,['root']);assert.equal(stats.simulation.nodeEvaluations,3);assert.deepEqual(stats.counts,{definitionsBuilt:0,rootBuilt:0});assert.deepEqual(await page.evaluate(()=>LogicApp.getSimulation().outputs.o),[1]);
+ await page.locator('#next-step').click();assert.equal(await page.locator('#nand-count').textContent(),'3000');assert.deepEqual((await page.evaluate(()=>LogicApp.getPerformance())).counts,{definitionsBuilt:0,rootBuilt:0});assert.deepEqual(errors,[]);
+ console.log('PASS browser: 3000 NANDs; selection keeps DOM and simulation; unrelated input evaluates only 3 root nodes; step does no recount');
+}finally{await browser.close();server.close();}})().catch(e=>{console.error(e);process.exitCode=1;server.close();});

@@ -55,18 +55,16 @@
   function nets(state){
     const ws=state.wires,parent=ws.map((_,i)=>i),find=i=>parent[i]===i?i:(parent[i]=find(parent[i]));
     const join=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent[a]=b;};
-    const paths=ws.map(w=>points(w,state));
-    const ends=ws.map(w=>[anchor(w.a,state),anchor(w.b,state)]);
-    for(let i=0;i<ws.length;i++)for(let j=0;j<i;j++){
-      let touch=false;
-      for(const a of [ws[i].a,ws[i].b])for(const b of [ws[j].a,ws[j].b])if(a.node&&b.node&&key(a)===key(b))touch=true;
-      for(const [ei,pi] of [[i,j],[j,i]])for(const [index,e] of ends[ei].entries())if(![ws[ei].a,ws[ei].b][index].node)for(let k=1;k<paths[pi].length;k++)if(distance(e,project(e,paths[pi][k-1],paths[pi][k]))<0.05)touch=true;
-      if(touch)join(i,j);
-    }
+    const allPorts=state.nodes.flatMap(n=>ports(n,state.definitions)),portByKey=new Map(allPorts.map(p=>[key(p),p])),owners=new Map(),free=[];
+    const ends=ws.map((w,i)=>[w.a,w.b].map(e=>{if(!e.node){free.push({i,p:e});return e;}const k=key(e);if(owners.has(k))join(i,owners.get(k));else owners.set(k,i);return portByKey.get(k);}));
+    const paths=ws.map((w,i)=>{const [a,b]=ends[i],x=(a.x+b.x)/2;return w.via?.length?[a,...w.via,b]:[a,{x,y:a.y},{x,y:b.y},b];});
+    // Only free endpoints can join the middle of another wire. Port-to-port
+    // connections use the index above; mere path crossings stay separate.
+    for(const {i,p} of free)for(let j=0;j<ws.length;j++)if(i!==j)for(let k=1;k<paths[j].length;k++)if(distance(p,project(p,paths[j][k-1],paths[j][k]))<0.05){join(i,j);break;}
     const groups=new Map(),portNet=new Map(),wireNet=new Map();
-    ws.forEach((w,i)=>{const id=find(i);if(!groups.has(id))groups.set(id,{id,drivers:new Map(),ports:new Map(),wires:[]});const g=groups.get(id);g.wires.push(w.id);wireNet.set(w.id,id);for(const e of [w.a,w.b])if(e.node){const k=key(e),p=anchor(e,state);g.ports.set(k,p);portNet.set(k,id);if(e.dir==='out')g.drivers.set(k,p);}});
+    ws.forEach((w,i)=>{const id=find(i);if(!groups.has(id))groups.set(id,{id,drivers:new Map(),ports:new Map(),wires:[]});const g=groups.get(id);g.wires.push(w.id);wireNet.set(w.id,id);for(const e of [w.a,w.b])if(e.node){const k=key(e),p=portByKey.get(k);g.ports.set(k,p);portNet.set(k,id);if(e.dir==='out')g.drivers.set(k,p);}});
     // A free endpoint placed exactly on a port also attaches to it.
-    for(const n of state.nodes)for(const p of ports(n,state.definitions))for(let i=0;i<ws.length;i++)if(ends[i].some((e,index)=>![ws[i].a,ws[i].b][index].node&&distance(e,p)<0.05)){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
+    for(const p of allPorts)for(const {i,p:e} of free)if(distance(e,p)<0.05){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
     return {groups,portNet,wireNet};
   }
   const tableCache=new WeakMap();
@@ -119,9 +117,37 @@
     }finally{visiting.delete(id);}
   }
   function definitionInfo(id,defs){const table=tableFor(id,defs,compiledTables(defs));return table.eligible?{method:'truth-table',inputBits:table.inputBits,cachedRows:table.rows.size}:{method:'circuit',reason:table.reason};}
+  function createSimulator(){
+    let signature=null,session;
+    const run=state=>{
+      const next=JSON.stringify(state.definitions||{});
+      if(next!==signature){signature=next;session={topologies:new Map(),results:new Map()};}
+      run.stats={topologyBuilds:0,cacheHits:0,nodeEvaluations:0,scopes:[]};
+      const memory=state.delayState||{},memories=new Map();
+      for(const [path,value] of Object.entries(memory)){const parts=path.split('/');for(let i=1;i<parts.length;i++){const scope=parts.slice(0,i).join('/');if(!memories.has(scope))memories.set(scope,[]);memories.get(scope).push([path.slice(scope.length),value]);}}
+      return simulate(state,{},0,{memory,scope:'root',session,memories,stats:run.stats});
+    };
+    run.stats={};return run;
+  }
+  function simulationTopology(state,context){
+    const signature=JSON.stringify([state.nodes.map(({value,...n})=>n),state.wires]),cache=context.session?.topologies;
+    if(cache?.has(signature))return {signature,...cache.get(signature)};
+    const net=nets(state),ps=new Map(state.nodes.map(n=>[n.id,ports(n,state.definitions)])),deps=new Map(),followers=new Map();
+    for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g?.drivers.size===1&&[...g.ports.values()].every(q=>q.width===p.width))dependencies.add([...g.drivers.values()][0].node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
+    const order=state.nodes.filter(n=>!deps.get(n.id).size).map(n=>n.id);
+    for(let head=0;head<order.length;head++)for(const id of followers.get(order[head])||[]){const d=deps.get(id);d.delete(order[head]);if(!d.size)order.push(id);}
+    const topology={net,ps,order:order.length===state.nodes.length?order:null};
+    if(context.stats)context.stats.topologyBuilds++;
+    if(cache){if(cache.size>=128)cache.clear();cache.set(signature,topology);}
+    return {signature,...topology};
+  }
   function simulate(state,overrides={},depth=0,context={memory:state.delayState||{},scope:'root'}){
     if(depth>12)throw Error('自定义门嵌套过深');
-    const defs=state.definitions||{},net=nets(state),issues=new Set(),values={},outputs={};
+    const defs=state.definitions||{},topology=simulationTopology(state,context),{net,ps}=topology,issues=new Set(),values={},outputs={};
+    const resultKey=context.session&&JSON.stringify([topology.signature,overrides,state.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0]),context.memories.get(context.scope)||[],context.scope==='root'?state.wireOverrides||{}:{}]);
+    const cached=context.session?.results.get(context.scope);
+    if(cached&&cached.key===resultKey){context.stats.cacheHits++;return cached.result;}
+    if(context.stats)context.stats.scopes.push(context.scope);
     const tables=context.useTruthTables===false?null:(context.tables||compiledTables(defs));
     const forced=new Map();if(context.scope==='root')for(const [id,bits] of Object.entries(state.wireOverrides||{})){const group=net.wireNet.get(id);if(group!==undefined)forced.set(group,bits);}
     const low=w=>Array(w).fill(0);
@@ -132,10 +158,12 @@
     }
     function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);if(forced.has(id))return bitArray(packBits(forced.get(id)),p.width);const g=net.groups.get(id);if(g.drivers.size!==1||[...g.ports.values()].some(q=>q.width!==p.width))return low(p.width);const d=[...g.drivers.values()][0];return prev[d.node]?.[d.port]||low(p.width);}
     let current=values,settled=false;
-    for(let step=0;step<Math.min(state.nodes.length+4,512);step++){
+    const byId=new Map(state.nodes.map(n=>[n.id,n])),ordered=topology.order&&context.useTopological!==false?topology.order.map(id=>byId.get(id)):null;
+    for(let step=0;step<(ordered?1:Math.min(state.nodes.length+4,512));step++){
       const next={};
-      for(const n of state.nodes){
-        const ps=ports(n,defs),ins=ps.filter(p=>p.dir==='in').map(p=>read(p,current));
+      for(const n of ordered||state.nodes){
+        if(context.stats)context.stats.nodeEvaluations++;
+        const ins=ps.get(n.id).filter(p=>p.dir==='in').map(p=>read(p,ordered?next:current));
         if(n.type==='input')next[n.id]=[overrides[n.id]||bitArray(n.value||0,width(n))];
         else if(n.type==='output')next[n.id]=[];
         else if(n.type==='delay')next[n.id]=[bitArray(context.memory[context.scope+'/'+n.id]||0,width(n))];
@@ -144,15 +172,17 @@
         else if(n.type==='splitter')next[n.id]=ins[0].map(v=>[v]);
         else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible)next[n.id]=table.lookup(ins);else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
       }
-      if(JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
+      if(ordered||JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
     }
     if(!settled){issues.add('电路未收敛，请检查反馈回路；计算元件输出已设为低电平');for(const n of state.nodes)if(!['input','delay'].includes(n.type))current[n.id]=spec(n,defs).outputs.map(low);}
-    for(const n of state.nodes)if(n.type==='output')outputs[n.id]=read(ports(n,defs)[0],current);
+    for(const n of state.nodes)if(n.type==='output')outputs[n.id]=read(ps.get(n.id)[0],current);
     const wires={},portValues={};
-    for(const n of state.nodes)for(const p of ports(n,defs))portValues[key(p)]=p.dir==='out'&&!forced.has(net.portNet.get(key(p)))?current[n.id][p.port]:read(p,current);
+    for(const n of state.nodes)for(const p of ps.get(n.id))portValues[key(p)]=p.dir==='out'&&!forced.has(net.portNet.get(key(p)))?current[n.id][p.port]:read(p,current);
     for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id));const p=[...g.ports.values()][0];wires[w.id]=forced.get(g.id)||(p?read(p,current):[0]);}
     const definitionModes={};if(depth===0&&tables)for(const id of Object.keys(defs)){const table=tableFor(id,defs,tables);definitionModes[id]=table.eligible?'真值表':table.reason;}
-    return {values:current,outputs,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
+    const result={values:current,outputs,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
+    if(context.session){if(context.session.results.size>=4096)context.session.results.clear();context.session.results.set(context.scope,{key:resultKey,result});}
+    return result;
   }
   // Sample every register from the same old state, including separate custom instances.
   function step(state){
@@ -172,6 +202,31 @@
     const memo=new Map(),visiting=new Set(),defs=state.definitions||{};
     function count(nodes){const total={nand:0,delay:0,hub:0,splitter:0};for(const n of nodes){if(Object.hasOwn(total,n.type))total[n.type]++;else if(n.type==='custom'){if(!memo.has(n.def)){if(visiting.has(n.def))throw Error('自定义门循环依赖');visiting.add(n.def);memo.set(n.def,count(defs[n.def].nodes));visiting.delete(n.def);}const sub=memo.get(n.def);for(const type of Object.keys(total))total[type]+=sub[type];}}return total;}
     return count(state.nodes);
+  }
+  function createComponentCounter(){
+    const entries=new Map();let rootKey=null,rootCounts,knownDefinitions=new Map();const blank=()=>({nand:0,delay:0,hub:0,splitter:0});
+    const count=state=>{
+      count.stats={definitionsBuilt:0,rootBuilt:0};const defs=state.definitions||{},visiting=new Set(),resolved=new Map(),changed=knownDefinitions.size!==Object.keys(defs).length||Object.entries(defs).some(([id,d])=>knownDefinitions.get(id)!==d);
+      const composition=nodes=>JSON.stringify(nodes.map(n=>n.type==='custom'?['custom',n.def]:[n.type]));
+      function definition(id){
+        if(!changed&&entries.has(id))return entries.get(id);
+        if(resolved.has(id))return resolved.get(id);if(visiting.has(id))throw Error('自定义门循环依赖');
+        const d=defs[id];if(!d)throw Error('自定义门不存在');visiting.add(id);
+        let entry=entries.get(id);
+        if(entry?.definition!==d){const signature=composition(d.nodes);entry={...entry,definition:d,signature,types:d.nodes.map(n=>[n.type,n.def])};entries.set(id,entry);}
+        const children=entry.types.filter(([type])=>type==='custom').map(([,child])=>definition(child));
+        const key=entry.signature+'|'+children.map(c=>c.revision).join(',');
+        if(entry.key!==key){const counts=blank();let i=0;for(const [type] of entry.types){if(type==='custom'){const child=children[i++].counts;for(const k of Object.keys(counts))counts[k]+=child[k];}else if(Object.hasOwn(counts,type))counts[type]++;}entry.key=key;entry.counts=counts;entry.revision=(entry.revision||0)+1;count.stats.definitionsBuilt++;}
+        visiting.delete(id);resolved.set(id,entry);return entry;
+      }
+      const children=state.nodes.filter(n=>n.type==='custom').map(n=>definition(n.def));
+      const nextKey=composition(state.nodes)+'|'+children.map(c=>c.revision).join(',');
+      if(nextKey!==rootKey){rootCounts=blank();let i=0;for(const n of state.nodes){if(n.type==='custom'){for(const k of Object.keys(rootCounts))rootCounts[k]+=children[i].counts[k];i++;}else if(Object.hasOwn(rootCounts,n.type))rootCounts[n.type]++;}rootKey=nextKey;count.stats.rootBuilt++;}
+      for(const id of entries.keys())if(!Object.hasOwn(defs,id))entries.delete(id);
+      knownDefinitions=new Map(Object.entries(defs));
+      return {...rootCounts};
+    };
+    count.invalidate=()=>{entries.clear();knownDefinitions=new Map();rootKey=null;};count.stats={};return count;
   }
   function makeDefinition(state,name){
     name=String(name).trim();if(!name||name.length>24)throw Error('名称请输入 1–24 个字');
@@ -227,9 +282,9 @@
     for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
     let total=raw.nodes.length;for(const id of ids){circuit(defs[id]);total+=defs[id].nodes.length;}if(total>5000)fail();circuit(raw);
     for(const [path,value] of Object.entries(raw.delayState||{})){let local=raw,n;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){n=local.nodes.find(n=>n.id===parts[i]);if(!n)break;if(i<parts.length-1){if(n.type!=='custom'){n=null;break;}local=defs[n.def];}}if(n?.type==='delay'&&!validValue(value,width(n)))fail();}
-    const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>12||cost>5000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>5000)fail();
+    const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>12||cost>1000000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>1000000)fail();
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,project,distance,nets,simulate,step,definitionInfo,countComponents,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS};
 });
