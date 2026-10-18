@@ -8,12 +8,12 @@
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
-  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false,recoveryPending=false;
+  let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false,recoveryPending=false,wireInspectorTarget=null;
   const pasteLayer=document.createElementNS('http://www.w3.org/2000/svg','g');pasteLayer.setAttribute('class','paste-preview');pasteLayer.setAttribute('data-paste-preview','');pasteLayer.style.display='none';$('world').append(pasteLayer);
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:names[n.type]);
-  const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions,delayState:state.delayState||{},displayFormat:state.displayFormat||'unsigned',wireOverrides:state.wireOverrides||{},...(gateEditor?{editorRoot:gateEditor.root}:{})});
+  const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions,delayState:state.delayState||{},displayFormat:state.displayFormat||'unsigned',wireOverrides:state.wireOverrides||{},scopedWireOverrides:state.scopedWireOverrides||{},...(gateEditor?{editorRoot:gateEditor.root}:{})});
   function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
   const backupKey='logic-workshop-refresh-backups-v1';
   const saveText=()=>unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera});
@@ -47,7 +47,7 @@
   function commit(before){
     const missing=(a,b)=>{const ids=new Set(b.map(item=>item.id));return a.some(item=>!ids.has(item.id));};
     const removed=missing(before.nodes,state.nodes)||missing(before.wires,state.wires)||Object.keys(before.definitions).some(id=>!state.definitions[id]||(!before.definitions[id].hidden&&state.definitions[id].hidden));
-    if(removed){const original=C.clone(before.editorRoot||before);delete original.editorRoot;delete original.wireOverrides;backupText(JSON.stringify({...original,camera:gateEditor?gateEditor.camera:camera}),'删除前');}
+    if(removed){const original=C.clone(before.editorRoot||before);delete original.editorRoot;delete original.wireOverrides;delete original.scopedWireOverrides;backupText(JSON.stringify({...original,camera:gateEditor?gateEditor.camera:camera}),'删除前');}
     if(gateEditor){try{gateEditor.root=C.updateDefinition({...gateEditor.root,definitions:state.definitions,displayFormat:state.displayFormat||'unsigned'},gateEditor.id,state);state.definitions=gateEditor.root.definitions;}catch(error){state=C.clone(before);if(before.editorRoot){gateEditor.root=C.clone(before.editorRoot);state.definitions=gateEditor.root.definitions;}toast(error.message);render();return;}}state.definitions=C.pruneDefinitions(gateEditor?gateEditor.root:state);if(gateEditor)gateEditor.root.definitions=state.definitions;if(JSON.stringify(before)!==JSON.stringify(snapshot())){past.push(before);if(past.length>60)past.shift();future=[];}if(removed)backupText(saveText(),'删除后');render();save();}
   function change(fn){if(unreadableSave!==null||storageReadFailed){toast('原存档读取失败，已保留；请先全部导出备份，再导入恢复');return;}if(expanded){toast(expanded.libraryView?'切换到编辑模式后可修改':'全部收回后即可继续编辑电路');return;}cancelPaste();const before=snapshot();fn();commit(before);}
   function restore(s){stopRunning();state=C.clone(s);if(gateEditor&&s.editorRoot){gateEditor.root=C.clone(s.editorRoot);state.definitions=gateEditor.root.definitions;delete state.editorRoot;}selected=null;render();save();}
@@ -93,7 +93,42 @@
       return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><g transform="${C.rotationTransform(n,state.definitions)}"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="${z.w/2}" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="${z.w/2}" y="${z.h+(multiIO?35:15)}" text-anchor="middle">${escape(n.type==='custom'?(sim.definitionModes[n.def]==='状态真值表'?'STATE TABLE':sim.definitionModes[n.def]==='真值表'?'TRUTH TABLE':'CUSTOM CIRCUIT'):subtitles[n.type])}</text></g></g>`;
     }).join('');
   }
-  function renderWireInspector(){const wire=state.wires.find(w=>w.id===selected?.id);if(!wire)return;const bits=sim.wires[wire.id],forced=sim.forcedWires.includes(wire.id);$('selection-panel').innerHTML='<div class="selection-eyebrow">已选中导线 · '+bits.length+' 位</div><div class="selected-name">'+(forced?'临时输入已生效':'导线临时输入')+'</div><p class="selection-description">覆盖原输入与当前驱动。下一步先采样，再清除临时值。</p><form id="wire-force-form"><label class="property-row">'+formatNames[state.displayFormat||'unsigned']+'<input id="wire-force-value" type="text" maxlength="260" aria-label="导线临时数值" value="'+C.formatValue(bits,state.displayFormat)+'"></label><button class="primary" type="submit" style="margin-top:12px">应用临时输入</button><p id="wire-force-error" class="error" role="alert"></p></form>';$('selection-status').textContent=forced?'临时输入 · 下一步运行后清除':'已选中导线';$('wire-force-form').onsubmit=e=>{e.preventDefault();try{const value=C.parseSignal($('wire-force-value').value,bits.length,state.displayFormat),net=C.nets(state),group=net.wireNet.get(wire.id),before=snapshot();stopRunning();state.wireOverrides=state.wireOverrides||{};for(const id of Object.keys(state.wireOverrides))if(net.wireNet.get(id)===group)delete state.wireOverrides[id];state.wireOverrides[wire.id]=value;commit(before);}catch(error){$('wire-force-error').textContent=error.message;}};}
+  function scopedCircuit(scope){
+    let local=state,result=simulate(state),path='root';
+    for(const id of scope.split('/').slice(1)){
+      const n=local.nodes.find(n=>n.id===id);if(n?.type!=='custom')throw Error('导线所属实例已不存在');
+      const d=state.definitions[n.def],inputs=Object.fromEntries(d.inputs.map((p,i)=>[p.id,result.portValues[C.key({node:id,dir:'in',port:i})]]));
+      path+='/'+id;local={nodes:d.nodes,wires:d.wires,definitions:state.definitions};
+      result=C.simulate(local,inputs,1,{memory:state.delayState||{},scope:path,scopedOverrides:state.scopedWireOverrides||{}});
+    }
+    return {local,result};
+  }
+  function hasWireForces(){return Object.keys(state.wireOverrides||{}).length>0||Object.values(state.scopedWireOverrides||{}).some(ws=>Object.keys(ws).length);}
+  function refreshExpanded(){
+    if(!expanded)return;
+    if(expanded.instanceView){let source=snapshot(),scope='root';for(const frame of [...expanded.parents,expanded]){frame.target=source.nodes.find(n=>n.id===frame.debugNode);scope+='/'+frame.debugNode;frame.scope=scope;frame.view=window.LogicExpanded.focus(source,frame.debugNode);source=frame.view.source;}}
+    else expanded.view=window.LogicExpanded.build(snapshot(),{debugNode:expanded.debugNode,readOnly:!!expanded.libraryView});
+  }
+  function setWireTemporary(target,value){
+    const {local}=scopedCircuit(target.scope),wire=local.wires.find(w=>w.id===target.id);if(!wire)return;
+    const net=C.nets(local),group=net.wireNet.get(wire.id),before=snapshot();stopRunning();
+    let values;if(target.scope==='root')values=state.wireOverrides=state.wireOverrides||{};else{state.scopedWireOverrides=state.scopedWireOverrides||{};values=state.scopedWireOverrides[target.scope]=state.scopedWireOverrides[target.scope]||{};}
+    for(const id of Object.keys(values))if(net.wireNet.get(id)===group)delete values[id];values[wire.id]=value;
+    past.push(before);if(past.length>60)past.shift();future=[];wireInspectorTarget=target;refreshExpanded();render();save();
+  }
+  function activateWire(target){
+    const bits=scopedCircuit(target.scope).result.wires[target.id];if(!bits)return;
+    wireInspectorTarget=target;
+    if(bits.length===1)setWireTemporary(target,[1-(bits[0]||0)]);else if(!expanded&&target.scope==='root')renderSelection();else renderWireInspector(target);
+  }
+  function renderWireInspector(target={scope:'root',id:selected?.id}){
+    const {local,result}=scopedCircuit(target.scope),wire=local.wires.find(w=>w.id===target.id);if(!wire)return;
+    const bits=result.wires[wire.id],forced=result.forcedWires.includes(wire.id);document.querySelector('.inspector').classList.add('has-selection');
+    $('selection-panel').innerHTML='<div class="selection-eyebrow">已选中导线 · '+bits.length+' 位</div><div class="selected-name">'+(forced?'临时输入已生效':'导线临时输入')+'</div><p class="selection-description">'+(bits.length===1?'左键点击导线切换 0 / 1。':'输入临时数值，覆盖原输入与当前驱动。')+'下一步先采样，再清除临时值。</p>'+(bits.length===1?'<div class="port-reading"><span>当前值</span><code>'+bits[0]+'</code></div>':'<form id="wire-force-form"><label class="property-row">'+formatNames[state.displayFormat||'unsigned']+'<input id="wire-force-value" type="text" maxlength="260" aria-label="导线临时数值" value="'+C.formatValue(bits,state.displayFormat)+'"></label><button class="primary" type="submit" style="margin-top:12px">应用临时输入</button><p id="wire-force-error" class="error" role="alert"></p></form>');
+    $('selection-status').textContent=forced?'临时输入 · 下一步运行后清除':'已选中导线';
+    if(bits.length===1)return;
+    $('wire-force-form').onsubmit=e=>{e.preventDefault();try{setWireTemporary(target,C.parseSignal($('wire-force-value').value,bits.length,state.displayFormat));}catch(error){if($('wire-force-error'))$('wire-force-error').textContent=error.message;else toast(error.message);}};
+  }
   function renderInspector(){
     const n=selected?.type==='node'?state.nodes.find(n=>n.id===selected.id):null;
     document.querySelector('.inspector').classList.toggle('has-selection',!!selected);
@@ -122,7 +157,7 @@
   function deleteSavedGate(id){if(expanded||gateEditor||placement||!Object.hasOwn(state.definitions,id))return;const name=state.definitions[id].name;change(()=>{state=C.deleteDefinition(state,id);});toast('已从“我的逻辑门”删除「'+name+'」，可撤销恢复。');}
   $('custom-library').addEventListener('click',e=>{const b=e.target.closest('[data-delete-custom]');if(b){e.stopPropagation();deleteSavedGate(b.dataset.deleteCustom);}});
   $('custom-library').addEventListener('contextmenu',e=>{const b=e.target.closest('[data-custom],[data-delete-custom]');if(b){e.preventDefault();if(b.dataset.custom)debugSavedGate(b.dataset.custom);else deleteSavedGate(b.dataset.deleteCustom);}});
-  const storedSnapshot=()=>{const result=gateEditor?C.clone(gateEditor.root):expanded?.original?C.clone(expanded.original):snapshot();delete result.wireOverrides;return result;};
+  const storedSnapshot=()=>{const result=gateEditor?C.clone(gateEditor.root):expanded?.original?C.clone(expanded.original):snapshot();delete result.wireOverrides;delete result.scopedWireOverrides;return result;};
   function editingWouldRecurse(id,seen=new Set()){if(!gateEditor)return false;if(id===gateEditor.id)return true;if(seen.has(id))return false;seen.add(id);return state.definitions[id]?.nodes.some(n=>n.type==='custom'&&editingWouldRecurse(n.def,seen))||false;}
   function debugSavedGate(id){if(expanded||gateEditor||placement||gesture)return;const d=state.definitions[id];if(!d)return;stopRunning();cancelPaste();const root=snapshot();gateEditor={id,root,before:C.clone(root),camera:{...camera},mode,past,future};state={version:1,nodes:C.clone(d.nodes),wires:C.clone(d.wires),definitions:root.definitions,displayFormat:root.displayFormat};past=[];future=[];selected=null;setMode('wire');const before=snapshot();if(repairWirePaths(true))commit(before);else render();fit(true);toast('正在编辑「'+d.name+'」，修改会同步更新所有引用');}
   function setGateMode(nextMode){if(!gateEditor||gesture||placement)return;cancelPaste();stopRunning();if(nextMode==='view'&&!expanded){const view=window.LogicExpanded.build(snapshot(),{readOnly:true});expanded={libraryView:true,view,camera:{...camera},mode};selected=null;setMode('pan');render();fit();}else if(nextMode==='edit'&&expanded?.libraryView){const previous=expanded;expanded=null;camera={...previous.camera};setMode(previous.mode);selected=null;render();}}
@@ -131,9 +166,9 @@
   let runTimer=null;
   function stopRunning(){clearInterval(runTimer);runTimer=null;$('auto-run').textContent='自动运行';$('auto-run').setAttribute('aria-pressed','false');}
   function advance(manual=false){
-    if(expanded?.libraryView||expanded?.instanceView||gesture||placement||document.querySelector('dialog[open]'))return;
-    const before=manual?snapshot():null;state.delayState=C.step(state);state.wireOverrides={};
-    if(expanded)expanded.view=window.LogicExpanded.build(snapshot(),{debugNode:expanded.debugNode,readOnly:!!expanded.libraryView});
+    if((expanded?.libraryView||expanded?.instanceView)&&!hasWireForces()||gesture||placement||document.querySelector('dialog[open]'))return;
+    const before=manual?snapshot():null;state.delayState=C.step(state);state.wireOverrides={};state.scopedWireOverrides={};
+    if(expanded)refreshExpanded();
     if(manual&&!expanded?.libraryId)commit(before);else{render();save();}
   }
   function startRunning(){stopRunning();const speed=Math.max(.1,Math.min(60,Number($('run-speed').value)||1));$('run-speed').value=speed;runTimer=setInterval(()=>advance(),1000/speed);$('auto-run').textContent='暂停';$('auto-run').setAttribute('aria-pressed','true');}
@@ -149,28 +184,29 @@
   }
   function render(){
     $('number-format').value=state.displayFormat||'unsigned';
-    sim=simulate(state);if(expanded){$('wire-layer').innerHTML='';$('node-layer').innerHTML=expanded.view.svg;$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');const target=expanded.instanceView?expanded.target:gateEditor?{type:'custom',def:gateEditor.id}:expanded.libraryId?{type:'custom',def:expanded.libraryId}:state.nodes.find(n=>n.id===expanded.debugNode),sources=expanded.libraryView||expanded.instanceView?[]:state.nodes.filter(n=>n.type==='input');$('selection-panel').innerHTML='<div class="selection-eyebrow">'+(expanded.instanceView?'状态查看':expanded.libraryView?'查看模式 · 只读':target?'逻辑门调试':'已全部展开')+'</div><div class="selected-name">'+escape(target?(expanded.libraryView||expanded.instanceView?'查看：':'调试：')+title(target):'实时调试电路')+'</div><p class="selection-description">'+(expanded.instanceView?'当前实例的输入和延迟状态已带入内部，保持原值。<br>点击内部自定义门继续进入；点击线路追踪连接。<br>点击“退出”返回上一层。':expanded.libraryView?'仅查看内部结构，可平移、缩放和追踪线路。<br>切换到编辑模式可修改原层级电路。':'点击输入位可实时切换，返回后保留。<br>输入组、输出组保持各自原来的相对位置。<br>点击线路高亮，点击“返回原电路”恢复画布。')+'</p><div class="debug-sources">'+sources.map(n=>'<div class="debug-source"><span>'+escape(title(n))+'</span><div class="bit-switches">'+bitSwitches(n)+'</div></div>').join('')+'</div>';$('selection-status').textContent=(expanded.instanceView?'状态查看 · 第 '+(expanded.parents.length+1)+' 层 · ':expanded.libraryView?'查看模式 · ':'实时调试 · ')+expanded.view.leaves.length+' 个原始元件';}else{renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
+    sim=simulate(state);if(expanded){$('wire-layer').innerHTML='';$('node-layer').innerHTML=expanded.view.svg;$('draft-layer').innerHTML='';document.querySelector('.inspector').classList.remove('has-selection');const target=expanded.instanceView?expanded.target:gateEditor?{type:'custom',def:gateEditor.id}:expanded.libraryId?{type:'custom',def:expanded.libraryId}:state.nodes.find(n=>n.id===expanded.debugNode),sources=expanded.libraryView||expanded.instanceView?[]:state.nodes.filter(n=>n.type==='input');$('selection-panel').innerHTML='<div class="selection-eyebrow">'+(expanded.instanceView?'状态查看':expanded.libraryView?'查看模式 · 只读':target?'逻辑门调试':'已全部展开')+'</div><div class="selected-name">'+escape(target?(expanded.libraryView||expanded.instanceView?'查看：':'调试：')+title(target):'实时调试电路')+'</div><p class="selection-description">'+(expanded.instanceView?'当前实例的输入和延迟状态已带入内部，保持原值。<br>点击内部自定义门继续进入；点击导线设置临时值。<br>点击“退出”返回上一层。':expanded.libraryView?'查看内部结构，可平移、缩放；点击导线设置临时输入。<br>切换到编辑模式可修改原层级电路。':'点击输入位可实时切换，返回后保留。<br>输入组、输出组保持各自原来的相对位置。<br>点击导线设置临时输入，点击“返回原电路”恢复画布。')+'</p><div class="debug-sources">'+sources.map(n=>'<div class="debug-source"><span>'+escape(title(n))+'</span><div class="bit-switches">'+bitSwitches(n)+'</div></div>').join('')+'</div>';$('selection-status').textContent=(expanded.instanceView?'状态查看 · 第 '+(expanded.parents.length+1)+' 层 · ':expanded.libraryView?'查看模式 · ':'实时调试 · ')+expanded.view.leaves.length+' 个原始元件';}else{renderWires();renderNodes();renderInspector();}renderLibrary();setCamera();
     $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;$('rotate').disabled=!!expanded||!['node','nodes'].includes(selected?.type);$('debug').disabled=!!expanded||selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);$('exit-gate').hidden=!expanded?.instanceView;$('back-to-circuit').hidden=!!expanded?.instanceView||!(expanded||gateEditor);$('back-to-circuit').textContent=gateEditor&&!expanded?.libraryView?'保存并返回原电路':'返回原电路';
     for(const id of ['package','import','new','wire-mode','export-clear'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded||!!(gateEditor&&(b.dataset.deleteCustom||b.dataset.custom&&editingWouldRecurse(b.dataset.custom))));if(gateEditor)for(const id of ['import','new','export-clear'])$(id).disabled=true;
     $('node-layer').classList.toggle('read-only-view',!!expanded?.libraryView||!!expanded?.instanceView);
-    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation'])$(id).disabled=!!expanded?.libraryView||!!expanded?.instanceView;
+    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation'])$(id).disabled=(!!expanded?.libraryView||!!expanded?.instanceView)&&(id!=='next-step'||!hasWireForces());
     $('expand').disabled=!!gateEditor||!expanded&&!state.nodes.some(n=>n.type==='custom');$('expand').textContent=expanded?'全部收回':'全部展开';$('expand').setAttribute('aria-pressed',String(!!expanded));
     $('onboarding').hidden=!!gateEditor||!!expanded||!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
     $('node-count').textContent=gateEditor?(expanded?.libraryView?'查看：':'编辑：')+state.definitions[gateEditor.id].name+' · '+state.nodes.length+' 个元件':expanded?expanded.view.leaves.length+' 个原始元件 · 调试':state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
     const counts=countComponents(state);$('nand-count').textContent=counts.nand;$('delay-count').textContent=counts.delay;$('hub-count').textContent=counts.hub;$('splitter-count').textContent=counts.splitter;$('component-counts').title=(gateEditor?'当前门':'当前电路')+'，含自定义门内部元件；同一门每放置一次都会累加，不按类型去重';
+    if(expanded&&wireInspectorTarget)try{renderWireInspector(wireInspectorTarget);}catch{wireInspectorTarget=null;}
     $('sim-status').textContent=sim.issues.length?'检查连接':'信号已稳定';
     $('sim-dot').style.background=sim.issues.length?'#e5b978':'#91e6be';
     $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'未接线输入默认为 0（低电平）。':'电路正在实时响应输入变化。');
   }
-  function returnToCircuit(){if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();return;}if(!expanded||gesture||placement)return;stopRunning();if(expanded.instanceView&&expanded.parents.length){const parent=expanded.parents.pop();Object.assign(expanded,{view:parent.view,target:parent.target,debugNode:parent.debugNode});camera={...parent.camera};render();save();return;}const previous=expanded;expanded=null;if(previous.original)state=previous.original;camera={...previous.camera};setMode(previous.mode);selected=null;if(previous.before)commit(previous.before);else{render();save();}}
-  function enterExpanded(debugNode=null){if(gateEditor||expanded||gesture||placement||document.querySelector('dialog[open]'))return;if(!debugNode&&!state.nodes.some(n=>n.type==='custom')){toast('先在画布上放置一个自定义门');return;}try{const view=window.LogicExpanded.build(snapshot(),{debugNode});expanded={view,debugNode,camera:{...camera},mode};selected=null;setMode('pan');render();fit(true);}catch(error){toast(error.message);}}
+  function returnToCircuit(){wireInspectorTarget=null;if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();return;}if(!expanded||gesture||placement)return;stopRunning();if(expanded.instanceView&&expanded.parents.length){const parent=expanded.parents.pop();Object.assign(expanded,{view:parent.view,target:parent.target,debugNode:parent.debugNode,scope:parent.scope});camera={...parent.camera};refreshExpanded();render();save();return;}const previous=expanded;expanded=null;if(previous.original)state=previous.original;camera={...previous.camera};setMode(previous.mode);selected=null;if(previous.before)commit(previous.before);else{render();save();}}
+  function enterExpanded(debugNode=null){if(gateEditor||expanded||gesture||placement||document.querySelector('dialog[open]'))return;if(!debugNode&&!state.nodes.some(n=>n.type==='custom')){toast('先在画布上放置一个自定义门');return;}try{wireInspectorTarget=null;const view=window.LogicExpanded.build(snapshot(),{debugNode});expanded={view,debugNode,camera:{...camera},mode};selected=null;setMode('pan');render();fit(true);}catch(error){toast(error.message);}}
   function toggleExpanded(){if(expanded)returnToCircuit();else enterExpanded();}
   function enterGateView(id){
     if((expanded&&!expanded.instanceView)||gateEditor||gesture||placement)return;
     try{
-      stopRunning();const source=expanded?expanded.view.source:snapshot(),target=source.nodes.find(n=>n.id===id),view=window.LogicExpanded.focus(source,id);
-      if(expanded){expanded.parents.push({view:expanded.view,target:expanded.target,debugNode:expanded.debugNode,camera:{...camera}});Object.assign(expanded,{view,target,debugNode:id});}
-      else expanded={view,target,parents:[],debugNode:id,instanceView:true,camera:{...camera},mode};
+      stopRunning();wireInspectorTarget=null;const scope=expanded?expanded.scope+'/'+id:'root/'+id,source=expanded?expanded.view.source:snapshot(),target=source.nodes.find(n=>n.id===id),view=window.LogicExpanded.focus(source,id);
+      if(expanded){expanded.parents.push({view:expanded.view,target:expanded.target,debugNode:expanded.debugNode,scope:expanded.scope,camera:{...camera}});Object.assign(expanded,{view,target,debugNode:id,scope});}
+      else expanded={view,target,parents:[],debugNode:id,scope,instanceView:true,camera:{...camera},mode};
       selected=null;setMode('pan');render();fit();
     }catch(error){toast(error.message);}
   }
@@ -202,7 +238,7 @@
   }
   function rotateSelected(){if(expanded||gesture||placement)return;const ids=selected?.type==='nodes'?selected.ids:selected?.type==='node'?[selected.id]:[];if(!ids.length)return;change(()=>{for(const n of state.nodes.filter(n=>ids.includes(n.id))){const before=C.size(n,state.definitions);n.rotation=((n.rotation||0)+90)%360;const after=C.size(n,state.definitions);n.x+=(before.w-after.w)/2;n.y+=(before.h-after.h)/2;}rerouteWires();});}
   function setInputValue(n,value){if(expanded?.libraryView||expanded?.instanceView)return;if(n.type!=='input'||n.value===value)return;const before=snapshot();n.value=value;if(expanded?.libraryId){const saved=state.definitions[expanded.libraryId].nodes.find(p=>p.id===n.id);if(saved)saved.value=value;expanded.view=window.LogicExpanded.build(snapshot());render();save();return;}if(expanded){expanded.view=window.LogicExpanded.build(snapshot(),{debugNode:expanded.debugNode});selected=null;}else selected={type:'node',id:n.id};commit(before);}
-  $('number-format').onchange=e=>{const format=e.target.value;if(!C.DISPLAY_FORMATS.includes(format))return;const before=snapshot();state.displayFormat=format;if(expanded?.original)expanded.original.displayFormat=format;if(expanded?.instanceView){const frames=[...expanded.parents,expanded];let source=snapshot();for(const frame of frames){frame.view=window.LogicExpanded.focus(source,frame.debugNode);source=frame.view.source;}}else if(expanded)expanded.view=window.LogicExpanded.build(snapshot(),{debugNode:expanded.debugNode});if(expanded?.libraryId){render();save();}else commit(before);};
+  $('number-format').onchange=e=>{const format=e.target.value;if(!C.DISPLAY_FORMATS.includes(format))return;const before=snapshot();state.displayFormat=format;if(expanded?.original)expanded.original.displayFormat=format;if(expanded)refreshExpanded();if(expanded?.libraryId){render();save();}else commit(before);};
   function toggle(id){const n=state.nodes.find(n=>n.id===id);if(n){const values=C.bitArray(n.value||0,n.bits||1);for(let bit=0;bit<values.length;bit++){values[bit]=1-values[bit];if(values[bit])break;}setInputValue(n,C.packBits(values));}}
   function toggleBit(id,bit){const n=state.nodes.find(n=>n.id===id);if(!n||n.type!=='input'||!Number.isInteger(bit)||bit<0||bit>=(n.bits||1))return;const values=C.bitArray(n.value||0,n.bits||1);values[bit]=1-values[bit];setInputValue(n,C.packBits(values));}
   function activateBit(target){const id=target.dataset.bitToggle,bit=Number(target.dataset.bit),panel=target.closest('#selection-panel'),focused=document.activeElement===target;toggleBit(id,bit);if(focused)(panel?$('selection-panel'):svg).querySelector(`[data-bit-toggle="${id}"][data-bit="${bit}"]`)?.focus({preventScroll:true});}
@@ -257,7 +293,7 @@
     const point=closest||{x:Math.round(p.x/12)*12,y:Math.round(p.y/12)*12};return {anchor:endpoint(point),point,snapped:!!closest};
   }
   function setMode(next){mode=next;$('wire-mode').classList.toggle('active',mode==='wire');$('pan-mode').classList.toggle('active',mode==='pan');svg.classList.toggle('panning',mode==='pan'||space);}
-  svg.addEventListener('click',e=>{if(Date.now()<suppressCanvasClickUntil){e.preventDefault();e.stopImmediatePropagation();}},true);
+  svg.addEventListener('click',e=>{if(Date.now()<suppressCanvasClickUntil&&!e.target.closest('[data-expanded-net]')){e.preventDefault();e.stopImmediatePropagation();}},true);
   svg.addEventListener('contextmenu',e=>e.preventDefault());
   svg.addEventListener('pointerdown',e=>{
     if(pastePreview){if(e.button===0){placePaste(e);svg.focus({preventScroll:true});}e.preventDefault();return;}
@@ -266,6 +302,7 @@
     if(e.button===0&&!space&&expanded?.instanceView&&e.target.closest('[data-expanded-type=custom][data-expanded-node]')){gesture={type:'instance-node',id:e.target.closest('[data-expanded-node]').dataset.expandedNode,start:localPoint(e),camera:{...camera},moved:false};}
     else if(e.button===0&&e.shiftKey&&!expanded){gesture={type:'marquee',start:p,current:p,beforeSelection:C.clone(selected)};updateMarquee(p);}
     else if(e.button===2&&(nodeEl||wire)){gesture={type:'right-delete',target:{type:nodeEl?'node':'wire',id:nodeEl?nodeEl.dataset.node:wire.dataset.wire},start:localPoint(e),moved:false,pointerId:e.pointerId};}
+    else if(e.button===0&&wire&&mode==='pan'&&!space){gesture={type:'wire-select',wire:wire.dataset.wire,start:localPoint(e),camera:{...camera},moved:false};}
     else if(e.button===2||e.button===1||space||mode==='pan'){gesture={type:'pan',start:localPoint(e),camera:{...camera}};svg.classList.add('dragging');}
     else if(e.target.matches('input'))return;
     else if(toggleEl||e.target.closest('[data-bit-toggle]'))return;
@@ -294,7 +331,7 @@
     const p=worldPoint(e);$('coords').textContent='X '+Math.round(p.x)+' · Y '+Math.round(p.y);if(!gesture)return;
     if(gesture.type==='marquee'){updateMarquee(p);}
     else if(gesture.type==='right-delete'){gesture.moved=gesture.moved||C.distance(localPoint(e),gesture.start)>6;}
-    else if(gesture.type==='pan'||gesture.type==='instance-node'){const q=localPoint(e);if(gesture.type==='instance-node')gesture.moved=gesture.moved||C.distance(q,gesture.start)>5;camera.x=gesture.camera.x+q.x-gesture.start.x;camera.y=gesture.camera.y+q.y-gesture.start.y;setCamera();}
+    else if(gesture.type==='pan'||gesture.type==='instance-node'||gesture.type==='wire-select'){const q=localPoint(e);if(gesture.type==='instance-node'||gesture.type==='wire-select')gesture.moved=gesture.moved||C.distance(q,gesture.start)>5;camera.x=gesture.camera.x+q.x-gesture.start.x;camera.y=gesture.camera.y+q.y-gesture.start.y;setCamera();}
     else if(gesture.type==='nodes'){moveGroup(p);}
     else if(gesture.type==='node'){const n=state.nodes.find(n=>n.id===gesture.id);if(!n)return;gesture.moved=gesture.moved||C.distance(p,gesture.start)*camera.scale>5;if(!gesture.moved)return;if(!gesture.before)gesture.before=snapshot();n.x=Math.round((gesture.x+p.x-gesture.start.x)/12)*12;n.y=Math.round((gesture.y+p.y-gesture.start.y)/12)*12;rerouteWires();sim=simulate(state);renderWires();renderNodes();}
     else {const s=snap(p);gesture.current=s.point;gesture.b=s.anchor;gesture.moved=C.distance(gesture.start,p)*camera.scale>6;const routed=C.route(gesture.a,s.anchor,state);$('draft-layer').innerHTML=routed?`<path class="draft" d="${path(routed)}"/>${s.snapped?`<circle class="snap-ring" cx="${s.point.x}" cy="${s.point.y}" r="10"/>`:''}`:'';}
@@ -304,15 +341,20 @@
     if(g.type==='marquee'){suppressCanvasClickUntil=Date.now()+100;if(cancel)selected=g.beforeSelection;render();return;}
     if(g.type==='right-delete'){if(cancel||g.moved||C.distance(localPoint(e),g.start)>6)return;const hit=document.elementFromPoint(e.clientX,e.clientY),target=hit?.closest(g.target.type==='node'?'[data-node]':'[data-wire]');if(target&&(g.target.type==='node'?target.dataset.node:target.dataset.wire)===g.target.id){const n=state.nodes.find(n=>n.id===g.target.id);remove(g.target);}return;}
     if(g.type==='instance-node'){suppressCanvasClickUntil=Date.now()+100;if(cancel){camera={...g.camera};setCamera();}else if(!g.moved)enterGateView(g.id);save();return;}
+    if(g.type==='wire-select'){if(!cancel&&!g.moved){selected={type:'wire',id:g.wire};activateWire({scope:'root',id:g.wire});}save();return;}
     if(g.type==='pan'){save();return;}
     if(g.type==='nodes'){if(cancel)state=g.before;else if(g.moved){suppressCanvasClickUntil=Date.now()+100;commit(g.before);}render();return;}
     if(g.type==='node'){if(g.moved){if(cancel)state=g.before;else commit(g.before);render();}else renderSelection();const n=state.nodes.find(n=>n.id===g.id);if(!cancel&&!g.moved&&n?.type==='custom'&&!gateEditor){suppressCanvasClickUntil=Date.now()+100;enterGateView(n.id);}else if(!cancel&&!g.moved&&n&&['hub','splitter'].includes(n.type))openBusDialog(n);return;}
     if(cancel)return;
     if(g.moved){if(state.wires.length>=1500)return toast('当前画布已达 1500 根导线');const b=g.b||snap(worldPoint(e)).anchor;if(JSON.stringify(g.a)===JSON.stringify(b))return;const routed=C.route(g.a,b,state);if(!routed)return toast('找不到避开逻辑门的路径，请调整元件位置');change(()=>{const w={id:uid('w'),a:g.a,b,via:routed.slice(1,-1),autoRoute:true};state.wires.push(w);selected={type:'wire',id:w.id};});if(sim.issues.length)toast(sim.issues[0]);}
-    else {selected=g.wire?{type:'wire',id:g.wire}:null;renderSelection();}
+    else {selected=g.wire?{type:'wire',id:g.wire}:null;if(g.wire)activateWire({scope:'root',id:g.wire});else renderSelection();}
   }
   svg.addEventListener('pointerup',e=>finish(e));svg.addEventListener('pointercancel',e=>finish(e,true));
-  function highlightExpanded(target){const net=target.closest('[data-expanded-net]');svg.querySelectorAll('[data-expanded-net]').forEach(el=>{el.classList.toggle('is-focused',!!net&&el===net);el.classList.toggle('is-muted',!!net&&el!==net);});$('selection-status').textContent=net?net.dataset.description:'实时调试 · 点击输入切换，点击线路追踪连接';}
+  function highlightExpanded(target){
+    const net=target.closest('[data-expanded-net]');svg.querySelectorAll('[data-expanded-net]').forEach(el=>{el.classList.toggle('is-focused',!!net&&el===net);el.classList.toggle('is-muted',!!net&&el!==net);});
+    if(net?.dataset.expandedWire){const scope=expanded.instanceView?expanded.scope+(net.dataset.expandedScope||'root').slice(4):(net.dataset.expandedScope||'root');wireInspectorTarget={scope,id:net.dataset.expandedWire};try{activateWire(wireInspectorTarget);const current=svg.querySelector('[data-expanded-net="'+net.dataset.expandedNet+'"]');svg.querySelectorAll('[data-expanded-net]').forEach(el=>{el.classList.toggle('is-focused',el===current);el.classList.toggle('is-muted',el!==current);});}catch(error){toast(error.message);}}
+    const live=net&&svg.querySelector('[data-expanded-net="'+net.dataset.expandedNet+'"]');$('selection-status').textContent=live?.dataset.description||net?.dataset.description||'实时调试 · 点击导线设置临时输入';
+  }
   svg.addEventListener('click',e=>{if(expanded){highlightExpanded(e.target);return;}const t=e.target.closest('[data-toggle]');if(t)toggle(t.dataset.toggle);});
   svg.addEventListener('keydown',e=>{if(expanded&&['Enter',' '].includes(e.key)&&e.target.closest('[data-expanded-net]')){e.preventDefault();e.stopPropagation();highlightExpanded(e.target);}});
   svg.addEventListener('keydown',e=>{const t=e.target.closest('[data-toggle]');if(t&&['Enter',' '].includes(e.key)){e.preventDefault();toggle(t.dataset.toggle);}});

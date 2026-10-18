@@ -190,12 +190,14 @@
   function simulate(state,overrides={},depth=0,context={memory:state.delayState||{},scope:'root'}){
     if(depth>MAX_DEPTH)throw Error('自定义门嵌套过深');
     const defs=state.definitions||{},topology=simulationTopology(state,context),{net,ps}=topology,issues=new Set(),values={},outputs={};
-    const resultKey=context.session&&JSON.stringify([topology.signature,overrides,state.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0]),context.memories.get(context.scope)||[],context.scope==='root'?state.wireOverrides||{}:{}]);
+    const scopedOverrides=context.scopedOverrides||state.scopedWireOverrides||{},scopeKeys=Object.keys(scopedOverrides),blocked=scope=>scopeKeys.some(path=>path===scope||path.startsWith(scope+'/'));
+    context={...context,scopedOverrides};
+    const resultKey=context.session&&JSON.stringify([topology.signature,overrides,state.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0]),context.memories.get(context.scope)||[],context.scope==='root'?state.wireOverrides||{}:{},scopeKeys.filter(path=>path===context.scope||path.startsWith(context.scope+'/')).map(path=>[path,scopedOverrides[path]])]);
     const cached=context.session?.results.get(context.scope);
     if(cached&&cached.key===resultKey){context.stats.cacheHits++;return cached.result;}
     if(context.stats)context.stats.scopes.push(context.scope);
     const tables=context.useTruthTables===false?null:(context.tables||compiledTables(defs));
-    const forced=new Map();if(context.scope==='root')for(const [id,bits] of Object.entries(state.wireOverrides||{})){const group=net.wireNet.get(id);if(group!==undefined)forced.set(group,bits);}
+    const forced=new Map();for(const [id,bits] of Object.entries(context.scope==='root'?{...(state.wireOverrides||{}),...(scopedOverrides.root||{})}:scopedOverrides[context.scope]||{})){const group=net.wireNet.get(id);if(group!==undefined)forced.set(group,bits);}
     const low=w=>Array(w).fill(0);
     for(const n of state.nodes)values[n.id]=spec(n,defs).outputs.map(low);
     for(const g of net.groups.values()){
@@ -216,7 +218,7 @@
         else if(n.type==='nand')next[n.id]=[[1-(ins[0][0]&ins[1][0])]];
         else if(n.type==='hub')next[n.id]=[ins.map(v=>v[0])];
         else if(n.type==='splitter')next[n.id]=ins[0].map(v=>[v]);
-        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible){const row=lookupState(table,ins,context.scope+'/'+n.id,context);next[n.id]=row.outputs;row.issues.forEach(x=>issues.add(x));}else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id,captureNext:false});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
+        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible&&!blocked(context.scope+'/'+n.id)){const row=lookupState(table,ins,context.scope+'/'+n.id,context);next[n.id]=row.outputs;row.issues.forEach(x=>issues.add(x));}else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id,captureNext:false});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
       }
       if(ordered||JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
     }
@@ -234,7 +236,7 @@
         if(n.type==='delay')nextDelayState[scope]=packBits(ins[0]);
         else if(n.type==='custom'){
           const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);
-          if(table?.eligible){if(!table.registers.length)continue;const row=lookupState(table,ins,scope,context);table.registers.forEach((p,i)=>nextDelayState[scope+'/'+p.path]=row.next[i]);}
+          if(table?.eligible&&!blocked(scope)){if(!table.registers.length)continue;const row=lookupState(table,ins,scope,context);table.registers.forEach((p,i)=>nextDelayState[scope+'/'+p.path]=row.next[i]);}
           else {const input=Object.fromEntries(d.inputs.map((p,i)=>[p.id,ins[i]])),sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,scope,captureNext:true});Object.assign(nextDelayState,sub.nextDelayState);}
         }
       }
@@ -316,6 +318,7 @@
     if(!raw||raw.version!==1||!Array.isArray(raw.nodes)||!Array.isArray(raw.wires)||!raw.definitions||typeof raw.definitions!=='object'||Array.isArray(raw.definitions))fail();
     const safeId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x)&&!['__proto__','constructor','prototype'].includes(x);
     if(raw.wireOverrides!==undefined&&(!raw.wireOverrides||typeof raw.wireOverrides!=='object'||Array.isArray(raw.wireOverrides)||Object.keys(raw.wireOverrides).length>1500||Object.entries(raw.wireOverrides).some(([id,bits])=>!safeId(id)||!Array.isArray(bits)||!bits.length||bits.length>MAX_BITS||bits.some(b=>b!==0&&b!==1))))fail();
+    if(raw.scopedWireOverrides!==undefined){const entries=Object.entries(raw.scopedWireOverrides||{});if(!raw.scopedWireOverrides||typeof raw.scopedWireOverrides!=='object'||Array.isArray(raw.scopedWireOverrides)||entries.length>5000)fail();for(const [scope,ws] of entries)if(scope.length>2800||scope!=='root'&&!scope.startsWith('root/')||!scope.split('/').every(safeId)||!ws||typeof ws!=='object'||Array.isArray(ws)||Object.entries(ws).some(([id,bits])=>!safeId(id)||!Array.isArray(bits)||!bits.length||bits.length>MAX_BITS||bits.some(b=>b!==0&&b!==1)))fail();}
     const validValue=(v,bits)=>typeof v==='string'?/^[01]+$/.test(v)&&v.length<=bits:Number.isSafeInteger(v)&&v>=0&&v<2**bits;
     if(raw.delayState!==undefined&&(!raw.delayState||typeof raw.delayState!=='object'||Array.isArray(raw.delayState)||Object.keys(raw.delayState).length>5000||Object.entries(raw.delayState).some(([k,v])=>k.length>1200||!k.startsWith('root/')||!k.split('/').every(safeId)||!validValue(v,MAX_BITS))))fail();
     const finite=x=>typeof x==='number'&&Number.isFinite(x)&&Math.abs(x)<=1e9;
