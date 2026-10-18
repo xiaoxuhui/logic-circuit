@@ -253,9 +253,25 @@
     else if(port){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node),q=C.ports(n,state.definitions).find(q=>q.dir===port.dataset.dir&&q.port===Number(port.dataset.port));gesture={type:'wire',start:q,a:endpoint(q),current:q,moved:false};}
     else if(nodeEl){const n=state.nodes.find(n=>n.id===nodeEl.dataset.node);if(selected?.type==='nodes'&&selected.ids.includes(n.id))beginGroupMove(p,e.pointerId);else{selected={type:'node',id:n.id};gesture={type:'node',id:n.id,start:p,x:n.x,y:n.y,before:null,moved:false};}renderSelection();}
     else {const s=snap(p);gesture={type:'wire',start:s.point,a:s.anchor,current:s.point,moved:false,wire:wire?.dataset.wire};}
-    if(gesture){svg.setPointerCapture(e.pointerId);svg.focus({preventScroll:true});e.preventDefault();}
+    if(gesture){gesture.pointerId=e.pointerId;if(gesture.type==='wire')gesture.lastPointer=localPoint(e);svg.setPointerCapture(e.pointerId);svg.focus({preventScroll:true});e.preventDefault();}
   });
   svg.addEventListener('pointermove',e=>{
+    // A mouse chord reports intermediate button presses/releases as pointermove.
+    if(gesture&&e.pointerType==='mouse'&&e.pointerId===gesture.pointerId){
+      const q=localPoint(e);
+      if(gesture.type==='pan'&&e.buttons===3&&!expanded&&mode==='wire'){
+        const s=snap(worldPoint(e));gesture={type:'wire',start:s.point,a:s.anchor,current:s.point,moved:false,pointerId:e.pointerId,lastPointer:q};
+      }
+      if(gesture.type==='wire'){
+        if(!(e.buttons&1)){
+          finish(e);
+          if(e.buttons&2){gesture={type:'pan',start:q,camera:{...camera},pointerId:e.pointerId};svg.setPointerCapture(e.pointerId);svg.classList.add('dragging');}
+          return;
+        }
+        if(e.buttons&2){camera.x+=q.x-gesture.lastPointer.x;camera.y+=q.y-gesture.lastPointer.y;setCamera();}
+        gesture.lastPointer=q;svg.classList.toggle('dragging',!!(e.buttons&2));
+      }
+    }
     const p=worldPoint(e);$('coords').textContent='X '+Math.round(p.x)+' · Y '+Math.round(p.y);if(!gesture)return;
     if(gesture.type==='marquee'){updateMarquee(p);}
     else if(gesture.type==='right-delete'){gesture.moved=gesture.moved||C.distance(localPoint(e),gesture.start)>6;}
@@ -290,7 +306,7 @@
     if((e.ctrlKey||e.metaKey)&&['c','v'].includes(e.key.toLowerCase())){e.preventDefault();if(!gesture&&!e.repeat){if(e.key.toLowerCase()==='c')copySelection();else pasteSelection();}return;}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'){e.preventDefault();if(gesture)return;selected=state.nodes.length?{type:'nodes',ids:state.nodes.map(n=>n.id)}:null;window.getSelection()?.removeAllRanges();render();return;}
     if(e.code==='Space'){e.preventDefault();if(!e.repeat)rotateSelected();return;}
-    if(e.key==='Escape'){if(gesture){if(['node','nodes'].includes(gesture.type)&&gesture.before)state=gesture.before;const pointerId=gesture.pointerId;gesture=null;if(pointerId!==undefined&&svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);$('draft-layer').innerHTML='';}selected=null;render();}
+    if(e.key==='Escape'){if(gesture){if(['node','nodes'].includes(gesture.type)&&gesture.before)state=gesture.before;const pointerId=gesture.pointerId;gesture=null;svg.classList.remove('dragging');if(pointerId!==undefined&&svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);$('draft-layer').innerHTML='';}selected=null;render();}
     if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();remove();}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)redo();else undo();}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();}
