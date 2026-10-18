@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "logic-circuit",
+  "displayName": "逻辑工坊",
+  "version": "0.2.0",
+  "directory": "dist",
+  "entryPage": "index.html",
+  "files": [
+    "LICENSE",
+    "index.html",
+    "styles.css",
+    "src/core.js",
+    "src/expanded.js",
+    "src/app.js"
+  ],
+  "license": "MIT",
+  "storageContract": "logic-circuit-dynamic-v1",
+  "storageKeys": [
+    "logic-workshop-v1"
+  ],
+  "minHostVersionCode": 4,
+  "resourceProtocol": 2,
+  "bridgeProtocol": 1,
+  "offline": true
+}
