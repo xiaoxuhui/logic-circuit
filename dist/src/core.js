@@ -207,9 +207,10 @@
     const entries=new Map();let rootKey=null,rootCounts,knownDefinitions=new Map();const blank=()=>({nand:0,delay:0,hub:0,splitter:0});
     const count=state=>{
       count.stats={definitionsBuilt:0,rootBuilt:0};const defs=state.definitions||{},visiting=new Set(),resolved=new Map(),changed=knownDefinitions.size!==Object.keys(defs).length||Object.entries(defs).some(([id,d])=>knownDefinitions.get(id)!==d);
+      if(changed)for(const entry of entries.values())entry.dirty=true;
       const composition=nodes=>JSON.stringify(nodes.map(n=>n.type==='custom'?['custom',n.def]:[n.type]));
       function definition(id){
-        if(!changed&&entries.has(id))return entries.get(id);
+        if(entries.has(id)&&!entries.get(id).dirty)return entries.get(id);
         if(resolved.has(id))return resolved.get(id);if(visiting.has(id))throw Error('自定义门循环依赖');
         const d=defs[id];if(!d)throw Error('自定义门不存在');visiting.add(id);
         let entry=entries.get(id);
@@ -217,7 +218,7 @@
         const children=entry.types.filter(([type])=>type==='custom').map(([,child])=>definition(child));
         const key=entry.signature+'|'+children.map(c=>c.revision).join(',');
         if(entry.key!==key){const counts=blank();let i=0;for(const [type] of entry.types){if(type==='custom'){const child=children[i++].counts;for(const k of Object.keys(counts))counts[k]+=child[k];}else if(Object.hasOwn(counts,type))counts[type]++;}entry.key=key;entry.counts=counts;entry.revision=(entry.revision||0)+1;count.stats.definitionsBuilt++;}
-        visiting.delete(id);resolved.set(id,entry);return entry;
+        entry.dirty=false;visiting.delete(id);resolved.set(id,entry);return entry;
       }
       const children=state.nodes.filter(n=>n.type==='custom').map(n=>definition(n.def));
       const nextKey=composition(state.nodes)+'|'+children.map(c=>c.revision).join(',');

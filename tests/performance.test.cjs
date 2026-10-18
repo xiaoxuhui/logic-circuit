@@ -7,3 +7,5 @@ test('topological evaluation agrees with iterative reference across generated DA
 
 
 test('large shared definitions load based on stored structure rather than a 5000 expanded-node cutoff',()=>{const s=large();s.nodes.push(n('copy','custom',1000,0,{def:'h'}));assert.deepEqual(C.validate(s),s);assert.equal(C.countComponents(s).nand,6000);});
+
+test('count cache notices definition edits made while viewing a primitive-only editor',()=>{const s=large(),count=C.createComponentCounter();count(s);const edited={...s.definitions.g,nodes:[...s.definitions.g.nodes,n('new','nand')]};count({...s,nodes:edited.nodes,definitions:{...s.definitions,g:edited}});assert.equal(count({...s,definitions:{...s.definitions,g:edited}}).nand,3100);});
