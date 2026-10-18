@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "logic-circuit",
   "displayName": "逻辑工坊",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "directory": "dist",
   "entryPage": "index.html",
   "files": [
