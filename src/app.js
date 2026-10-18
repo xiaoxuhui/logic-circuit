@@ -55,12 +55,16 @@
   function redo(){if(!future.length)return;past.push(snapshot());restore(future.pop());}
   function localPoint(e){const b=svg.getBoundingClientRect();return {x:e.clientX-b.left,y:e.clientY-b.top};}
   function worldPoint(e){const p=localPoint(e);return {x:(p.x-camera.x)/camera.scale,y:(p.y-camera.y)/camera.scale};}
-  let cameraMotionUntil=0;
-  function setCamera(moving=false){
+  let cameraMotionUntil=0,cameraFrame=null;
+  function syncSvgCamera(){
     $('world').setAttribute('transform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('grid').setAttribute('patternTransform',`translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
     $('zoom-label').textContent=Math.round(camera.scale*100)+'%';
-    if(expanded?.view.compact){if(moving){cameraMotionUntil=performance.now()+100;showPanImage();scheduleViewportDraw();}else drawExpanded();}
+  }
+  function setCamera(moving=false){
+    if(moving&&expanded?.view.compact){cameraMotionUntil=performance.now()+100;if(cameraFrame===null)cameraFrame=requestAnimationFrame(()=>{cameraFrame=null;if(!showPanImage())syncSvgCamera();});scheduleViewportDraw();return;}
+    if(cameraFrame!==null){cancelAnimationFrame(cameraFrame);cameraFrame=null;}syncSvgCamera();
+    if(expanded?.view.compact)drawExpanded();
   }
   function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2},moving=false){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera(moving);save();}
   function fit(initialView=false){
@@ -223,21 +227,23 @@
     renderInspector();$('delete').disabled=!selected;$('rotate').disabled=!['node','nodes'].includes(selected?.type);$('debug').disabled=selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);
   }
   let drawnExpandedSvg=null,drawnRegion=null,viewportTimer=null,panImageUrl=null,panImageRegion=null,requestedPanRegion=null,panImageSequence=0,panImageCss=null;
-  const panImageLayer=document.createElementNS('http://www.w3.org/2000/svg','g');panImageLayer.id='pan-image-layer';panImageLayer.style.pointerEvents='none';panImageLayer.style.visibility='hidden';$('world').append(panImageLayer);
-  function hidePanImage(){panImageLayer.style.visibility='hidden';$('node-layer').style.visibility='';}
-  function showPanImage(){if(panImageUrl&&panImageRegion===drawnRegion&&expanded?.view===panImageRegion.view){panImageLayer.style.visibility='visible';$('node-layer').style.visibility='hidden';}}
+  let panImageActive=false;
+  const panImageLayer=document.createElement('div');panImageLayer.id='pan-image-layer';panImageLayer.className='pan-image-surface';panImageLayer.setAttribute('aria-hidden','true');panImageLayer.style.visibility='hidden';svg.after(panImageLayer);
+  function hidePanImage(){if(panImageActive)syncSvgCamera();panImageActive=false;panImageLayer.style.visibility='hidden';$('world').style.visibility='';$('grid-bg').style.visibility='';$('node-layer').style.visibility='';}
+  function showPanImage(){if(!panImageUrl||panImageRegion!==drawnRegion||expanded?.view!==panImageRegion.view)return false;const region=panImageRegion;panImageLayer.firstChild.style.transform=`translate3d(${camera.x+region.x*camera.scale}px,${camera.y+region.y*camera.scale}px,0) scale(${camera.scale/region.scale})`;if(!panImageActive){panImageActive=true;panImageLayer.style.visibility='visible';$('world').style.visibility='hidden';$('grid-bg').style.visibility='hidden';$('node-layer').style.visibility='hidden';}$('zoom-label').textContent=Math.round(camera.scale*100)+'%';return true;}
   function clearPanImage(){panImageSequence++;hidePanImage();panImageLayer.replaceChildren();if(panImageUrl)URL.revokeObjectURL(panImageUrl);panImageUrl=null;panImageRegion=null;requestedPanRegion=null;}
   async function preparePanImage(markup,region){
     requestedPanRegion=region;const sequence=++panImageSequence;let svgUrl=null,pngUrl=null;
     try{if(panImageCss===null)panImageCss=[...document.styleSheets].flatMap(sheet=>{try{return [...sheet.cssRules].map(rule=>rule.cssText);}catch{return [];}}).join('\n');
       let factor=Math.min(window.devicePixelRatio||1,1.5,3072/(region.w*region.scale),3072/(region.h*region.scale));const area=region.w*region.h*region.scale*region.scale*factor*factor;if(area>6000000)factor*=Math.sqrt(6000000/area);const width=Math.max(1,Math.round(region.w*region.scale*factor)),height=Math.max(1,Math.round(region.h*region.scale*factor));
-      const source='<svg xmlns="http://www.w3.org/2000/svg" width="'+width+'" height="'+height+'" viewBox="'+region.x+' '+region.y+' '+region.w+' '+region.h+'"><style>'+panImageCss+'</style>'+markup+'</svg>';svgUrl=URL.createObjectURL(new Blob([source],{type:'image/svg+xml'}));const image=new Image();image.src=svgUrl;await image.decode();if(sequence!==panImageSequence)return;
+      const source='<svg xmlns="http://www.w3.org/2000/svg" width="'+width+'" height="'+height+'" viewBox="'+region.x+' '+region.y+' '+region.w+' '+region.h+'"><style>'+panImageCss+'</style><defs><pattern id="pan-grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#3b4850"/></pattern></defs><rect x="'+region.x+'" y="'+region.y+'" width="'+region.w+'" height="'+region.h+'" fill="#10181e"/><rect x="'+region.x+'" y="'+region.y+'" width="'+region.w+'" height="'+region.h+'" fill="url(#pan-grid)"/>'+markup+'</svg>';svgUrl=URL.createObjectURL(new Blob([source],{type:'image/svg+xml'}));const image=new Image();image.src=svgUrl;await image.decode();
+      while(sequence===panImageSequence&&(activePointers.size||performance.now()<cameraMotionUntil))await new Promise(resolve=>setTimeout(resolve,120));if(sequence!==panImageSequence)return;
       const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;canvas.getContext('2d').drawImage(image,0,0);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));canvas.width=canvas.height=1;if(!blob)throw Error('No raster');pngUrl=URL.createObjectURL(blob);
-      if(sequence!==panImageSequence||region!==drawnRegion||expanded?.view!==region.view)return;const old=panImageUrl,node=document.createElementNS('http://www.w3.org/2000/svg','image');node.setAttribute('href',pngUrl);node.setAttribute('x',region.x);node.setAttribute('y',region.y);node.setAttribute('width',region.w);node.setAttribute('height',region.h);node.setAttribute('data-pan-background','true');panImageLayer.replaceChildren(node);panImageUrl=pngUrl;pngUrl=null;panImageRegion=region;if(old)URL.revokeObjectURL(old);if(performance.now()<cameraMotionUntil)showPanImage();
+      const node=new Image();node.alt='';node.draggable=false;node.src=pngUrl;node.style.width=region.w*region.scale+'px';node.style.height=region.h*region.scale+'px';node.setAttribute('data-pan-background','true');await node.decode();if(sequence!==panImageSequence||region!==drawnRegion||expanded?.view!==region.view)return;const old=panImageUrl;panImageLayer.replaceChildren(node);panImageUrl=pngUrl;pngUrl=null;panImageRegion=region;if(old)URL.revokeObjectURL(old);if(performance.now()<cameraMotionUntil)showPanImage();
     }catch{}finally{if(svgUrl)URL.revokeObjectURL(svgUrl);if(pngUrl)URL.revokeObjectURL(pngUrl);}
   }
   function scheduleViewportDraw(){clearTimeout(viewportTimer);viewportTimer=setTimeout(()=>{applyExpansionReady();drawExpanded();},110);}
-  function drawExpanded(){if(!expanded)return;if(performance.now()>=cameraMotionUntil)hidePanImage();const view=expanded.view;if(view.compact&&performance.now()<cameraMotionUntil){scheduleViewportDraw();return;}let markup=view.svg;
+  function drawExpanded(){if(!expanded)return;const moving=performance.now()<cameraMotionUntil||panImageActive&&gesture?.type==='pan';if(!moving)hidePanImage();const view=expanded.view;if(view.compact&&moving){scheduleViewportDraw();return;}let markup=view.svg;
     if(view.compact){const rect={x:-camera.x/camera.scale,y:-camera.y/camera.scale,w:svg.clientWidth/camera.scale,h:svg.clientHeight/camera.scale},r=drawnRegion;
       if(r?.view===view&&rect.x>=r.x&&rect.y>=r.y&&rect.x+rect.w<=r.x+r.w&&rect.y+rect.h<=r.y+r.h&&camera.scale>=r.scale*.8&&camera.scale<=r.scale*1.25)return;
       const padX=rect.w*.35,padY=rect.h*.35;drawnRegion={view,x:rect.x-padX,y:rect.y-padY,w:rect.w+2*padX,h:rect.h+2*padY,scale:camera.scale};markup=window.LogicExpanded.viewportSvg(view,drawnRegion,camera.scale);
