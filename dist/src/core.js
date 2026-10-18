@@ -37,11 +37,13 @@
   function segmentHitsBox(p,q,r){let low=0,high=1;for(const [axis,extent] of [['x','w'],['y','h']]){const delta=q[axis]-p[axis],min=r[axis]+1e-7,max=r[axis]+r[extent]-1e-7;if(!delta){if(p[axis]<=min||p[axis]>=max)return false;}else{const a=(min-p[axis])/delta,b=(max-p[axis])/delta;low=Math.max(low,Math.min(a,b));high=Math.min(high,Math.max(a,b));if(low>=high)return false;}}return low<high;}
   function wireOverlaps(w,state){const ps=points(w,state);return state.wires.some(other=>other.id!==w.id&&points(other,state).slice(1).some((q,i,tail)=>{const p=i?tail[i-1]:anchor(other.a,state);return ps.slice(1).some((b,j)=>segmentsOverlap(ps[j],b,p,q));}));}
   function wireHitsGate(w,state){const ps=points(w,state);return state.nodes.some(n=>{const box={...n,...size(n,state.definitions)};return ps.slice(1).some((q,i)=>segmentHitsBox(ps[i],q,box));});}
+  // Short exits can enter a lane between the 8px node margin and an existing wire.
+  const ROUTE_LEAD_LENGTHS=[20,12,9];
   function leastOverlapRoute(aEnd,bEnd,state,ignoreWire){
     const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-8,y:n.y-8,w:size(n,state.definitions).w+16,h:size(n,state.definitions).h+16}));
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap((w,id)=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b,id}));}),edgeCache=new Map();
     const clear=(p,q,owner=null)=>!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
-    const exits=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;return [[p,{x:p.x+dx*20,y:p.y+dy*20}],...[-20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*20,y:q.y+dy*20}];})].filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));};
+    const exits=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;return ROUTE_LEAD_LENGTHS.flatMap(length=>[[p,{x:p.x+dx*length,y:p.y+dy*length}],...[-20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*length,y:q.y+dy*length}];})]).filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));};
     const starts=exits(aEnd,a),ends=exits(bEnd,b);if(!starts.length||!ends.length)return null;
     const edge=(p,q)=>{const k=p.x+','+p.y+'>'+q.x+','+q.y;if(edgeCache.has(k))return edgeCache.get(k);const length=distance(p,q),ranges=[];if(length)for(const s of segments)if(segmentsOverlap(p,q,s.a,s.b)){const dot=r=>((r.x-p.x)*(q.x-p.x)+(r.y-p.y)*(q.y-p.y))/length;ranges.push({id:s.id,low:Math.max(0,Math.min(dot(s.a),dot(s.b))),high:Math.min(length,Math.max(dot(s.a),dot(s.b)))});}const stops=[...new Set([0,length,...ranges.flatMap(r=>[r.low,r.high])])].sort((a,b)=>a-b),sections=stops.slice(1).map((stop,i)=>({length:stop-stops[i],ids:new Set(ranges.filter(r=>r.low<(stops[i]+stop)/2&&r.high>(stops[i]+stop)/2).map(r=>r.id))}));const result={sections,length};edgeCache.set(k,result);return result;};
     const advance=(ps,previous={ids:new Set(),repeats:0,shared:0,length:0})=>{let {ids,repeats,shared,length}=previous;for(let i=1;i<ps.length;i++){const e=edge(ps[i-1],ps[i]);if(!e.length)continue;for(const section of e.sections){for(const id of section.ids)if(!ids.has(id))repeats++;ids=section.ids;shared+=section.length*ids.size;}length+=e.length;}return {ids,repeats,shared,length};};
@@ -69,7 +71,7 @@
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap(w=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b}));});
     const overlap=segmentsOverlap;
     const clear=(p,q,owner=null)=>!segments.some(s=>overlap(p,q,s.a,s.b))&&!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
-    const leads=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;const choices=[[p,{x:p.x+dx*20,y:p.y+dy*20}],...[ -20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*20,y:q.y+dy*20}];})],usable=choices.filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));if(usable.length)return usable;
+    const leads=(end,p)=>{if(!end.node)return [[p]];const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;const choices=ROUTE_LEAD_LENGTHS.flatMap(length=>[[p,{x:p.x+dx*length,y:p.y+dy*length}],...[-20,20,-32,32].map(offset=>{const q={x:p.x-dy*offset,y:p.y+dx*offset};return [p,q,{x:q.x+dx*length,y:q.y+dy*length}];})]),usable=choices.filter(ps=>ps.slice(1).every((q,i)=>clear(ps[i],q,end.node)));if(usable.length)return usable;
       // More than three outgoing orthogonal rays cannot share only a port point.
       // Short distinct angled exits keep dense fanout connected without shared strokes.
       for(let offset=1;offset<=256&&usable.length<4;offset++)for(const sign of [-1,1]){const q={x:p.x+dx*20-dy*offset*sign,y:p.y+dy*20+dx*offset*sign};if(clear(p,q,end.node))usable.push([p,q]);}return usable;
@@ -87,8 +89,9 @@
     // Search all usable exits together. Failure must never invent an unchecked path.
     const tips=[...starts,...ends].map(ps=>ps.at(-1)),X=[...new Set([...tips.map(p=>p.x),...xs])].sort((a,b)=>a-b),Y=[...new Set([...tips.map(p=>p.y),...ys])].sort((a,b)=>a-b),width=X.length,index=p=>Y.indexOf(p.y)*width+X.indexOf(p.x),goals=new Map(ends.map(ps=>[index(ps.at(-1)),ps])),origins=new Map(),prev=new Map(),cost=new Map(),heap=[];
     const estimate=p=>Math.min(...ends.map(ps=>{const b=ps.at(-1);return Math.abs(p.x-b.x)+Math.abs(p.y-b.y);}));
-    const push=item=>{let i=heap.length;heap.push(item);while(i){const p=(i-1)>>1;if(heap[p].f<=item.f)break;heap[i]=heap[p];i=p;}heap[i]=item;};
-    const pop=()=>{const first=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let c=i*2+1;if(c+1<heap.length&&heap[c+1].f<heap[c].f)c++;if(last.f<=heap[c].f)break;heap[i]=heap[c];i=c;}heap[i]=last;}return first;};
+    const priority=(a,b)=>a.f-b.f||b.g-a.g;
+    const push=item=>{let i=heap.length;heap.push(item);while(i){const p=(i-1)>>1;if(priority(heap[p],item)<=0)break;heap[i]=heap[p];i=p;}heap[i]=item;};
+    const pop=()=>{const first=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let c=i*2+1;if(c+1<heap.length&&priority(heap[c+1],heap[c])<0)c++;if(priority(last,heap[c])<=0)break;heap[i]=heap[c];i=c;}heap[i]=last;}return first;};
     for(const ps of starts){const p=ps.at(-1),id=index(p);origins.set(id,ps);prev.set(id,null);cost.set(id,0);push({id,g:0,f:estimate(p)});}
     for(let visited=0;heap.length&&visited<20000;visited++){
       const current=pop(),{id,g}=current;if(g!==cost.get(id))continue;const x=id%width,y=Math.floor(id/width),p={x:X[x],y:Y[y]};

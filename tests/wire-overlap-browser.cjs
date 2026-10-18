@@ -16,6 +16,15 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
     const wired=await get();await page.keyboard.press('Control+z');assert.equal((await get()).wires.length,7);await page.keyboard.press('Control+Shift+z');assert.deepEqual((await get()).wires,wired.wires);
     console.log('PASS overlap: eight drawn fanouts share points only, avoid gates, signals and undo/redo');
 
+    await load(require('./fixtures/narrow-lane.cjs')());
+    const narrowBefore=await get();await drag(await xy('s','out'),await xy('t','in'));
+    const narrowPreview=await page.locator('.draft').getAttribute('d');assert.ok(narrowPreview);await page.mouse.up();
+    const narrowAfter=await get(),narrowWire=narrowAfter.wires.at(-1);assert.equal(narrowAfter.wires.length,narrowBefore.wires.length+1);
+    assert.equal(C.wireOverlaps(narrowWire,narrowAfter),false);assert.equal(C.wireHitsGate(narrowWire,narrowAfter),false);
+    assert.equal(await page.locator('[data-wire="'+narrowWire.id+'"] .wire-line').getAttribute('d'),narrowPreview);
+    assert.deepEqual(narrowAfter.nodes,narrowBefore.nodes);await page.keyboard.press('Control+z');assert.deepEqual((await get()).wires,narrowBefore.wires);
+    console.log('PASS overlap: narrow port corridors use zero overlap, preview and saved path agree, undo preserved');
+
     const blocked={version:1,nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]};
     await load(blocked);const before=await get();await drag(await xy({x:0,y:0}),await xy({x:200,y:200}));const preview=await page.locator('.draft').getAttribute('d');assert.ok(preview);await page.mouse.up();let added=(await get()).wires.at(-1);assert.equal((await get()).wires.length,before.wires.length+1);assert.ok(C.wireOverlaps(added,await get()));assert.equal(await page.locator('[data-wire="'+added.id+'"] .wire-line').getAttribute('d'),preview);await page.keyboard.press('Control+z');assert.deepEqual((await get()).wires,before.wires);await page.keyboard.press('Control+Shift+z');assert.deepEqual((await get()).wires.at(-1),added);
     console.log('PASS overlap: least-overlap fallback preview matches saved wire, undo/redo preserved');

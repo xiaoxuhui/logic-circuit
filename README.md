@@ -22,6 +22,8 @@ v0.2.4。离线数字电路沙盒：从与非门和延迟线开始，在无限�
 
 ## 验证与大厅
 
+0.2.8 修复固定端口引线漏掉窄通道：优先寻找可用的零重叠路线，再使用最少重叠降级。较短出口仍保留门体安全间距。
+
 `pnpm install --frozen-lockfile` 安装固定浏览器测试依赖；`pnpm test` 执行核心测试，`pnpm exec playwright install chromium` 后执行 `pnpm run test:browser` 运行完整与分功能浏览器回归。Windows 可设置 `PLAYWRIGHT_BROWSERS_PATH` 为现有 Chromium 缓存。
 
 `game-hub.integration.json` 描述稳定 ID、六个离线运行文件和存储合同；大厅从固定 Git 提交消费 dist，动态资源安装无需更新 APK。发布状态见 doc/GitHub与大厅接入报告.md。源码按 MIT 许可提供。

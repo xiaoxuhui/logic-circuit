@@ -2,6 +2,21 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),C=require
 const state=rotation=>({version:1,nodes:[{id:'a',type:'input',x:0,y:0,value:1},{id:'block',type:'nand',x:280,y:-20,rotation},{id:'o',type:'output',x:600,y:0}],wires:[],definitions:{}});
 const sharesLength=(p,q,r,t)=>{const u={x:q.x-p.x,y:q.y-p.y},v={x:t.x-r.x,y:t.y-r.y},len=Math.hypot(u.x,u.y);if(!len||!Math.hypot(v.x,v.y)||Math.abs(u.x*v.y-u.y*v.x)>1e-8||Math.abs((r.x-p.x)*u.y-(r.y-p.y)*u.x)>1e-8)return false;const dot=z=>((z.x-p.x)*u.x+(z.y-p.y)*u.y)/len;return Math.min(len,Math.max(dot(r),dot(t)))-Math.max(0,Math.min(dot(r),dot(t)))>1e-8;};
 function noOverlap(route,s){for(const w of s.wires){const old=C.points(w,s);for(let i=1;i<route.length;i++)for(let j=1;j<old.length;j++)assert.ok(!sharesLength(route[i-1],route[i],old[j-1],old[j]),'positive-length overlap with '+w.id);}}
+test('narrow port corridors choose an available zero-overlap route before fallback',()=>{
+  const s=require('./fixtures/narrow-lane.cjs')(),a={node:'s',dir:'out',port:0},b={node:'t',dir:'in',port:0},before=C.clone(s);
+  const witness=[{x:244,y:40},{x:244,y:60},{x:256,y:60},{x:256,y:-100},{x:988,y:-100},{x:988,y:328},{x:1000,y:328}];
+  noOverlap(witness,s);assert.equal(C.wireHitsGate({a,b,via:witness.slice(1,-1)},s),false);
+  const route=C.route(a,b,s);assert.ok(route);noOverlap(route,s);assert.equal(C.wireHitsGate({a,b,via:route.slice(1,-1)},s),false);assert.deepEqual(s,before);
+});
+for(const gap of [12,20])for(const rotation of [0,90,180,270])test('narrow exits at spacing '+gap+' and rotation '+rotation,()=>{
+  const s=require('./fixtures/narrow-lane.cjs')(gap),turn=p=>({x:-p.y,y:p.x});
+  for(let i=0;i<rotation/90;i++){
+    for(const n of s.nodes){const z=C.size(n,s.definitions),p=turn({x:n.x,y:n.y+z.h});n.x=p.x;n.y=p.y;n.rotation=((n.rotation||0)+90)%360;}
+    for(const w of s.wires){if(!w.a.node)w.a=turn(w.a);if(!w.b.node)w.b=turn(w.b);if(w.via)w.via=w.via.map(turn);}
+  }
+  const a={node:'s',dir:'out',port:0},b={node:'t',dir:'in',port:0},route=C.route(a,b,s);assert.ok(route);noOverlap(route,s);
+  assert.equal(C.wireHitsGate({a,b,via:route.slice(1,-1)},s),false);assert.deepEqual(route[0],{x:C.anchor(a,s).x,y:C.anchor(a,s).y});assert.deepEqual(route.at(-1),{x:C.anchor(b,s).x,y:C.anchor(b,s).y});
+});
 test('an occupied four-way junction chooses a safe least-overlap fallback',()=>{
   const s={nodes:[],definitions:{},wires:[{id:'h',a:{x:-100,y:0},b:{x:100,y:0}},{id:'v',a:{x:0,y:-100},b:{x:0,y:100}}]},before=C.clone(s);
   assert.ok(C.route({x:0,y:0},{x:200,y:200},s));assert.deepEqual(s,before);
