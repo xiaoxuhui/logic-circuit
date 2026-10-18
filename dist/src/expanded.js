@@ -10,7 +10,7 @@
   function build(source,options={}){
     const defs=source.definitions,leaves=[],frames=[],layouts=[];let total=0,netCounter=0;
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
-      if(depth>12)throw Error('展开层数超过限制');
+      if(depth>C.MAX_DEPTH)throw Error('展开层数超过限制');
       const net=C.nets(local),sim=C.simulate(local,overrides,depth,{memory:source.delayState||{},scope}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;

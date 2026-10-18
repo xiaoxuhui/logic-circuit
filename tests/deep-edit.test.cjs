@@ -1,0 +1,5 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('../src/core.js');
+function nested(depth){const definitions={g0:C.makeDefinition({nodes:[{id:'n',type:'nand',x:0,y:0}],wires:[],definitions:{}},'leaf')};for(let i=1;i<depth;i++)definitions['g'+i]=C.makeDefinition({nodes:[{id:'child',type:'custom',def:'g'+(i-1),x:0,y:0}],wires:[],definitions},'level'+i);return {version:1,nodes:[{id:'top',type:'custom',def:'g'+(depth-1),x:0,y:0}],wires:[],definitions};}
+test('15-layer saved gates allow edits to their underlying source',()=>{const s=nested(15),edited={...s.definitions.g0,nodes:[{id:'d',type:'delay',x:0,y:0}]};assert.deepEqual(C.validate(s),s);const next=C.updateDefinition(s,'g0',edited);assert.equal(next.definitions.g0.nodes[0].type,'delay');assert.deepEqual(C.simulate(next).issues,[]);});
+test('shared nesting guard accepts 32 and rejects 33 levels while retaining cycle checks',()=>{assert.equal(C.MAX_DEPTH,32);assert.ok(C.validate(nested(32)));assert.throws(()=>C.validate(nested(33)));const s=nested(2);s.definitions.g0.nodes=[{id:'cycle',type:'custom',def:'g1',x:0,y:0}];assert.throws(()=>C.validate(s));});
+module.exports={nested};

@@ -3,7 +3,7 @@
   const clone=x=>JSON.parse(JSON.stringify(x));
   const types=['nand','input','output','hub','splitter','delay','custom'];
   const width=n=>n.bits||1;
-  const MAX_BITS=256;
+  const MAX_BITS=256,MAX_DEPTH=32;
   const bigValue=value=>typeof value==='string'?BigInt('0b'+value):BigInt(value||0);
   const bitArray=(value,bits)=>{const text=bigValue(value).toString(2).padStart(bits,'0').slice(-bits);return [...text].reverse().map(Number);};
   const packBits=bits=>{const text=bits.slice().reverse().join('')||'0',value=BigInt('0b'+text);return value<=BigInt(Number.MAX_SAFE_INTEGER)?Number(value):text;};
@@ -142,7 +142,7 @@
     return {signature,...topology};
   }
   function simulate(state,overrides={},depth=0,context={memory:state.delayState||{},scope:'root'}){
-    if(depth>12)throw Error('自定义门嵌套过深');
+    if(depth>MAX_DEPTH)throw Error('自定义门嵌套过深');
     const defs=state.definitions||{},topology=simulationTopology(state,context),{net,ps}=topology,issues=new Set(),values={},outputs={};
     const resultKey=context.session&&JSON.stringify([topology.signature,overrides,state.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0]),context.memories.get(context.scope)||[],context.scope==='root'?state.wireOverrides||{}:{}]);
     const cached=context.session?.results.get(context.scope);
@@ -283,9 +283,9 @@
     for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
     let total=raw.nodes.length;for(const id of ids){circuit(defs[id]);total+=defs[id].nodes.length;}if(total>5000)fail();circuit(raw);
     for(const [path,value] of Object.entries(raw.delayState||{})){let local=raw,n;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){n=local.nodes.find(n=>n.id===parts[i]);if(!n)break;if(i<parts.length-1){if(n.type!=='custom'){n=null;break;}local=defs[n.def];}}if(n?.type==='delay'&&!validValue(value,width(n)))fail();}
-    const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>12||cost>1000000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>1000000)fail();
+    const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>MAX_DEPTH||cost>1000000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>1000000)fail();
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,project,distance,nets,simulate,createSimulator,step,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
