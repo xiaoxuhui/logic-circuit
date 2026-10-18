@@ -1,17 +1,17 @@
 (function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore);if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicExpanded=api;})(typeof globalThis!=='undefined'?globalThis:this,function(C){
   'use strict';
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const names={nand:'与非门',input:'输入',output:'输出',hub:'集线器',splitter:'分线器'};
-  const dec=bits=>bits.reduce((n,b,i)=>n+(b||0)*2**i,0);
+  const names={nand:'与非门',delay:'延迟线',input:'输入',output:'输出',hub:'集线器',splitter:'分线器'};
+  const dec=bits=>C.decimal(bits);
   const bitText=bits=>bits.slice().reverse().join('');
   const color=bits=>bits.some(b=>b===1)?'#91e6be':'#7793a8';
   const path=points=>points.map((p,i)=>(i?'L':'M')+p.x+','+p.y).join(' ');
-  const stroke=(points,bits)=>`<path class="expanded-wire" d="${path(points)}" stroke="${color(bits)}" stroke-width="${bits.length>1?4:2}"/>`;
+  const stroke=(points,bits)=>`<path class="expanded-wire wire-line ${bits.some(b=>b===1)?'high':''} ${bits.length>1?'bus':''}" d="${path(points)}" stroke="${color(bits)}" stroke-width="${bits.length>1?4:2}"/>`;
   function build(source,options={}){
     const defs=source.definitions,leaves=[],frames=[],layouts=[];let total=0,netCounter=0;
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
       if(depth>12)throw Error('展开层数超过限制');
-      const net=C.nets(local),sim=C.simulate(local,overrides),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
+      const net=C.nets(local),sim=C.simulate(local,overrides,depth,{memory:source.delayState||{},scope}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
         if(++total>5000)throw Error('展开后的元件过多，请先减少电路规模');
@@ -31,9 +31,10 @@
           items.set(n.id,{n,w:z.w,h:z.h,ins:isInput?[]:[point],outs:isInput?[point]:[],markup});continue;
         }
         const upright=['input','output'].includes(n.type)?n:{...n,rotation:0},z=C.size(upright,defs),base=C.baseSize(n,defs),ports=C.ports({...upright,x:0,y:0},defs),drawPorts=C.ports({...upright,x:0,y:0,rotation:0},defs),ins=ports.filter(p=>p.dir==='in'),outs=ports.filter(p=>p.dir==='out');
-        let glyph='⊼';if(n.type==='input')glyph=bitText(sim.values[n.id][0]);else if(n.type==='output')glyph=String(dec(sim.outputs[n.id]));else if(n.type==='hub')glyph=(n.bits||1)+' → 1';else if(n.type==='splitter')glyph='1 → '+(n.bits||1);
-        const switches=n.type==='input'?sim.values[n.id][0].slice().reverse().map((value,index)=>{const count=n.bits||1,cell=Math.min(25,100/count),bit=count-index-1;return `<g class="bit-switch ${value?'high':'low'}" data-bit-toggle="${n.id}" data-bit="${bit}" role="button" tabindex="0" aria-label="${esc(label)} b${bit}" aria-pressed="${!!value}" transform="translate(${76-count*cell/2+index*cell} 33)"><rect width="${cell-2}" height="31" rx="4"/><text x="${(cell-2)/2}" y="21" text-anchor="middle" style="font-size:${count>4?10:14}px">${value}</text></g>`;}).join(''):'';
-        const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}" ${scope==='root'?`data-expanded-node="${n.id}"`:''}><g transform="${C.rotationTransform(upright,defs)}"><title>${esc(label)}</title><rect width="${base.w}" height="${base.h}" rx="8"/><text class="expanded-title" x="76" y="20" text-anchor="middle">${esc(label.length>12?label.slice(0,11)+'…':label)}</text>${switches||`<text class="expanded-glyph" x="76" y="${base.h/2+18}" text-anchor="middle">${esc(glyph)}</text>`}${drawPorts.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g></g>`;
+        let glyph='⊼';if(n.type==='delay')glyph='▸▏ '+dec(sim.values[n.id][0]);else if(n.type==='input')glyph=bitText(sim.values[n.id][0]);else if(n.type==='output')glyph=String(dec(sim.outputs[n.id]));else if(n.type==='hub')glyph=(n.bits||1)+' → 1';else if(n.type==='splitter')glyph='1 → '+(n.bits||1);
+        const switches=n.type==='input'?sim.values[n.id][0].slice().reverse().map((value,index)=>{const count=n.bits||1,cell=24,bit=count-index-1;return `<g class="bit-switch ${value?'high':'low'}" ${options.readOnly?'':`data-bit-toggle="${n.id}" data-bit="${bit}" role="button" tabindex="0" aria-label="${esc(label)} b${bit}" aria-pressed="${!!value}"`} transform="translate(${base.w/2-count*cell/2+index*cell} 33)"><rect width="${cell-2}" height="31" rx="4"/><text x="${(cell-2)/2}" y="21" text-anchor="middle" style="font-size:14px">${value}</text></g>`;}).join(''):n.type==='output'?[...bitText(sim.outputs[n.id])].map((digit,i,all)=>`<g class="digit-cell" transform="translate(${base.w/2-all.length*12+i*24} 33)"><rect width="22" height="31" rx="4"/><text x="11" y="21" text-anchor="middle">${digit}</text></g>`).join(''):'';
+        const multiIO=['input','output'].includes(n.type)&&(n.bits||1)>1,decimalLabel=multiIO?`<text class="decimal-summary" x="${base.w/2}" y="${base.h+17}" text-anchor="middle" aria-label="数值">${C.formatValue(n.type==='input'?sim.values[n.id][0]:sim.outputs[n.id],source.displayFormat)}</text>`:'';
+        const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}" ${scope==='root'?`data-expanded-node="${n.id}"`:''}><g transform="${C.rotationTransform(upright,defs)}"><title>${esc(label)}</title><rect width="${base.w}" height="${base.h}" rx="8"/><text class="expanded-title" x="${base.w/2}" y="20" text-anchor="middle">${esc(label.length>12?label.slice(0,11)+'…':label)}</text>${switches||`<text class="expanded-glyph" x="${base.w/2}" y="${base.h/2+18}" text-anchor="middle">${esc(glyph)}</text>`}${decimalLabel}${drawPorts.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g></g>`;
         items.set(n.id,{n,label,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
       }
       const groups=[...net.groups.values()],columns=new Map(),top=65+groups.length*24;
