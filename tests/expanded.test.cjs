@@ -2,6 +2,27 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),C=require
 const n=(id,type,x,y,extra={})=>({id,type,x,y,...extra}),p=(node,port=0,dir='out')=>({node,port,dir});
 const base=()=>({version:1,nodes:[n('a','input',0,0),n('b','input',0,160),n('g','nand',250,0),n('o','output',500,0)],wires:[{id:'a',a:p('a'),b:p('g',0,'in')},{id:'b',a:p('b'),b:p('g',1,'in')},{id:'q',a:p('g'),b:p('o',0,'in')}],definitions:{}});
 const nested=()=>{const s=base();s.definitions.g=C.makeDefinition(s,'自定义 A');s.nodes[2]={...s.nodes[2],type:'custom',def:'g'};s.definitions.h=C.makeDefinition(s,'嵌套 B');s.nodes[2].def='h';return s;};
+test('layer limits expand exactly the requested custom levels without changing signals or source',()=>{
+  const s=nested();s.definitions.j=C.makeDefinition(s,'第三层');s.nodes[2].def='j';s.nodes[0].value=1;s.nodes[1].value=1;
+  const before=C.clone(s);E.clearCache();
+  for(const [limit,def] of [[1,'h'],[2,'g'],[3,null],[undefined,null],[2,'g'],[1,'h']]){
+    const view=E.build(s,{maxLayers:limit}),custom=view.leaves.filter(n=>n.type==='custom');
+    assert.equal(view.frames.length,limit===undefined?3:Math.min(limit,3));
+    assert.deepEqual(custom.map(n=>n.def),def?[def]:[]);
+    assert.deepEqual(view.leaves.find(n=>n.type==='output').output,[0]);
+    if(def)assert.deepEqual(custom[0].inputs,[[1],[1]]);
+    assert.deepEqual(s,before);
+  }
+});
+test('same definition at different depths gets the correct remaining expansion budget',()=>{
+  const s=nested();s.nodes.push(n('sibling','custom',250,300,{def:'g'}));s.wires.push({id:'sib',a:p('a'),b:p('sibling',0,'in')});
+  E.clearCache();for(const limit of [1,2,1,2]){const view=E.build(s,{maxLayers:limit,compact:true});assert.equal(view.leaves.filter(n=>n.type==='custom').length,limit===1?1:0);assert.equal(view.leaves.filter(n=>n.type==='nand').length,limit===1?1:2);assert.ok(!view.svg.includes('NaN'));}
+});
+test('layer validation rejects invalid values while default and direct expansion stay compatible',()=>{
+  for(const maxLayers of [0,-1,1.5,NaN,'2',C.MAX_DEPTH+1])assert.throws(()=>E.build(nested(),{maxLayers}),/展开层数/);
+  assert.equal(E.build(nested(),{direct:true}).frames.length,0);
+  assert.equal(E.build(nested()).frames.length,2);
+});
 test('recursive expansion reveals only primitive leaves and preserves source',()=>{const s=nested(),before=C.clone(s),r=E.build(s);assert.equal(r.frames.length,2);assert.equal(r.leaves.filter(n=>n.type==='nand').length,1);assert.ok(r.leaves.every(n=>n.type!=='custom'));assert.deepEqual(s,before);assert.ok(r.w>0&&r.h>0);});
 test('expanded NAND receives actual boundary values for every truth table row',()=>{for(let a=0;a<2;a++)for(let b=0;b<2;b++){const s=nested();s.nodes[0].value=a;s.nodes[1].value=b;const r=E.build(s),gate=r.leaves.find(n=>n.type==='nand');assert.deepEqual(gate.inputs,[[a],[b]]);assert.deepEqual(gate.values,[[1-(a&b)]]);assert.deepEqual(r.leaves.find(n=>n.type==='output').output,[1-(a&b)]);}});
 test('deleted but still used definition remains expandable',()=>{const s=C.deleteDefinition(nested(),'g'),r=E.build(s);assert.equal(s.definitions.g.hidden,true);assert.equal(r.leaves.filter(n=>n.type==='nand').length,1);});

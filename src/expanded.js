@@ -34,6 +34,8 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
   function getCacheStats(){return {...lastStats,entries:templates.size,bytes:templateBytes,structureBytes,maxEntries:MAX_CACHE_ENTRIES,maxBytes:MAX_CACHE_BYTES};}
   function clearCache(){templates.clear();structures.clear();templateBytes=structureBytes=0;lastStats={hits:0,misses:0,circuitsBuilt:0,evictions:0};}
   function build(source,options={}){
+    const maxLayers=options.maxLayers??Infinity;
+    if(maxLayers!==Infinity&&(!Number.isInteger(maxLayers)||maxLayers<1||maxLayers>C.MAX_DEPTH))throw Error('展开层数请输入 1–'+C.MAX_DEPTH+' 之间的整数');
     const compact=options.compact??(!options.direct&&Object.values(C.countComponents(source)).reduce((a,b)=>a+b,0)>5000);
     const simulationContext=C.createSimulationContext(source),defs=source.definitions,leaves=[],frames=[],layouts=[],stats={hits:0,misses:0,circuitsBuilt:0,evictions:0},definitionIds=new Map(),visiting=new Set(),memories=new Map(),forces=new Map();let total=0;lastStats=stats;
     const structure=(local,ports)=>internStructure(JSON.stringify([local.nodes.map(n=>n.type==='input'?{...n,value:undefined}:n),local.wires,ports,local.nodes.filter(n=>n.type==='custom').map(n=>[n.def,definitionId(n.def)])]));
@@ -43,7 +45,7 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
     function circuit(local,overrides={},boundary=false,depth=0,scope='root',boundaryPorts=null){
       if(depth>C.MAX_DEPTH)throw Error('展开层数超过限制');
       const startTotal=total,startLeaves=leaves.length,startFrames=frames.length,startLayouts=layouts.length;
-      const cacheKey=JSON.stringify([structure(local,boundaryPorts&&[boundaryPorts.name,boundaryPorts.inputs,boundaryPorts.outputs]),boundary,scope==='root',compact,!!options.direct,!!options.readOnly,!!options.preserveLayout,options.debugNode,source.displayFormat||'unsigned',Object.entries(overrides).sort(([a],[b])=>a.localeCompare(b)),local.nodes.filter(n=>n.type==='input').map(n=>[n.id,overrides[n.id]===undefined?n.value||0:overrides[n.id]]),memories.get(scope)||[],forces.get(scope)||[],local.wireOverrides||{}]);
+      const cacheKey=JSON.stringify([structure(local,boundaryPorts&&[boundaryPorts.name,boundaryPorts.inputs,boundaryPorts.outputs]),boundary,scope==='root',Number.isFinite(maxLayers)?Math.max(0,maxLayers-depth):null,compact,!!options.direct,!!options.readOnly,!!options.preserveLayout,options.debugNode,source.displayFormat||'unsigned',Object.entries(overrides).sort(([a],[b])=>a.localeCompare(b)),local.nodes.filter(n=>n.type==='input').map(n=>[n.id,overrides[n.id]===undefined?n.value||0:overrides[n.id]]),memories.get(scope)||[],forces.get(scope)||[],local.wireOverrides||{}]);
       const cached=templates.get(cacheKey);
       if(cached){if(depth+cached.view.depthSpan>C.MAX_DEPTH)throw Error('展开层数超过限制');templates.delete(cacheKey);templates.set(cacheKey,cached);stats.hits++;const view=rebase(cached.view,'root',scope);total+=view.count;leaves.push(...view.leaves);frames.push(...view.frames);layouts.push(...view.layouts);return view;}
       stats.misses++;stats.circuitsBuilt++;let netCounter=0,depthSpan=0;const symbols=new Map();
@@ -52,7 +54,7 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
         total++;
         const s=C.spec(n,defs),label=(n.type==='input'?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.type==='custom'?defs[n.def].name:names[n.type]));
-        if(n.type==='custom'&&!options.direct){
+        if(n.type==='custom'&&!options.direct&&depth<maxLayers){
           const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=sim.portValues[C.key({node:n.id,dir:'in',port:i})]);
           const child=circuit({nodes:d.nodes,wires:d.wires,definitions:defs},input,true,depth+1,scope+'/'+n.id,d),pad=28+Math.max(d.inputs.length,d.outputs.length)*14,w=child.w+pad*2;
           depthSpan=Math.max(depthSpan,child.depthSpan+1);
@@ -81,7 +83,7 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
         const switches=n.type==='input'?sim.values[n.id][0].slice().reverse().map((value,index)=>{const count=n.bits||1,cell=24,bit=count-index-1;return `<g class="bit-switch ${value?'high':'low'}" ${options.readOnly?'':`data-bit-toggle="${n.id}" data-bit="${bit}" role="button" tabindex="0" aria-label="${esc(label)} b${bit}" aria-pressed="${!!value}"`} transform="translate(${base.w/2-count*cell/2+index*cell} 33)"><rect width="${cell-2}" height="31" rx="4"/><text x="${(cell-2)/2}" y="21" text-anchor="middle" style="font-size:14px">${value}</text></g>`;}).join(''):n.type==='output'?[...bitText(sim.outputs[n.id])].map((digit,i,all)=>`<g class="digit-cell" transform="translate(${base.w/2-all.length*12+i*24} 33)"><rect width="22" height="31" rx="4"/><text x="11" y="21" text-anchor="middle">${digit}</text></g>`).join(''):'';
         const multiIO=['input','output'].includes(n.type)&&(n.bits||1)>1,decimalLabel=multiIO?`<text class="decimal-summary" x="${base.w/2}" y="${base.h+17}" text-anchor="middle" aria-label="数值">${C.formatValue(n.type==='input'?sim.values[n.id][0]:sim.outputs[n.id],source.displayFormat)}</text>`:'';
         const markup=`<g class="expanded-leaf" data-expanded-type="${n.type}" ${scope==='root'?`data-expanded-node="${n.id}"`:''}><g transform="${C.rotationTransform(upright,defs)}"><title>${esc(label)}</title><rect width="${base.w}" height="${base.h}" rx="8"/><text class="expanded-title" x="${base.w/2}" y="20" text-anchor="middle">${esc(label.length>12?label.slice(0,11)+'…':label)}</text>${switches||`<text class="expanded-glyph" x="${base.w/2}" y="${base.h/2+18}" text-anchor="middle">${esc(glyph)}</text>`}${decimalLabel}${drawPorts.map(p=>{const bits=sim.portValues[C.key({...p,node:n.id})];return `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color(bits)}"/><text class="expanded-port-label" x="${p.x+(p.dir==='in'?10:-10)}" y="${p.y+3}" text-anchor="${p.dir==='in'?'start':'end'}">${esc(p.label)}</text>`;}).join('')}</g></g>`;
-        items.set(n.id,{n,label,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
+        items.set(n.id,{n,label,w:z.w,h:z.h,ins,outs,markup});leaves.push({type:n.type,id:n.id,...(n.def?{def:n.def}:{}),scope,values:C.clone(sim.values[n.id]),inputs:s.inputs.map((_,i)=>C.clone(sim.portValues[C.key({node:n.id,dir:'in',port:i})])),output:n.type==='output'?C.clone(sim.outputs[n.id]):null});
       }
       const groups=[...net.groups.values()],columns=new Map(),top=65+groups.length*24;
       for(const item of items.values()){const key=item.n.type==='input'?-Infinity:item.n.type==='output'?Infinity:item.n.x;if(!columns.has(key))columns.set(key,[]);columns.get(key).push(item);}
