@@ -12,12 +12,19 @@ test('focused gate captures actual upstream input for each instance without chan
 });
 test('focused wide gate honors forced input and maps only its nested delay memory',()=>{
   const definitions={g:gate(16)};definitions.h=C.makeDefinition(circuit([node('i','input',0,{bits:16}),node('sub','custom',240,{def:'g'}),node('o','output',480,{bits:16})],[wire('a','i','sub'),wire('b','sub','o')],definitions),'父门');
+  definitions.h.nodes.find(n=>n.id==='sub').y=120;definitions.h.nodes.find(n=>n.id==='sub').rotation=90;
   const s=circuit([node('i','input',0,{bits:16,value:65535}),node('a','custom',240,{def:'h'}),node('b','custom',480,{def:'h'})],[wire('x','i','a')],definitions);
   s.delayState={'root/a/sub/d':513,'root/b/sub/d':65535};s.wireOverrides={x:C.bitArray(21845,16)};
   const before=C.clone(s),view=E.focus(s,'a');
   assert.equal(C.decimal(view.leaves.find(n=>n.id==='i'&&n.scope==='root').values[0]),'21845');
-  assert.equal(C.decimal(view.leaves.find(n=>n.type==='delay').values[0]),'513');
+  assert.equal(view.leaves.some(n=>n.type==='delay'),false);
+  assert.equal(C.decimal(view.leaves.find(n=>n.type==='custom').values[0]),'513');
   assert.equal(C.decimal(view.leaves.find(n=>n.id==='o'&&n.scope==='root').output),'513');
   assert.deepEqual(E.focus(s,'b').leaves.find(n=>n.id==='i'&&n.scope==='root').values,[Array(16).fill(0)]);
   assert.deepEqual(s,before);
+  const boxes=view.layouts[0].boxes;assert.equal(view.layouts.length,1);assert.equal(view.frames.length,0);
+  assert.equal(boxes.find(n=>n.id==='sub').x-boxes.find(n=>n.id==='i').x,240);
+  assert.equal(boxes.find(n=>n.id==='sub').y-boxes.find(n=>n.id==='i').y,120);
+  const inputBox=boxes.find(n=>n.id==='i'),offset={x:inputBox.x,y:inputBox.y};
+  assert.deepEqual(view.layouts[0].routes.find(r=>r.ports.some(p=>p.node==='i')).paths,[C.points(definitions.h.wires[0],{...definitions.h,definitions}).map(p=>({x:p.x+offset.x,y:p.y+offset.y}))]);
 });
