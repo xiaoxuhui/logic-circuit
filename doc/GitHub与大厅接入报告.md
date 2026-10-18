@@ -8,4 +8,8 @@
 
 ## 大厅发布
 
-PENDING：稳定 ID logic-circuit、资源合同 logic-circuit-dynamic-v1、contentCode1。由大厅独立清洁检出消费本来源固定 SHA，完成确定性资源生产、签名目录序列更新和匿名核验后补发行身份。
+VERIFIED：公开来源为 https://github.com/xiaoxuhui/logic-circuit ，固定发行源码 4d986e4ec445a2de3ab872730f2fcc9f89e09163；[更新后完整 CI 成功](https://github.com/xiaoxuhui/logic-circuit/actions/runs/39087349678)，包含“延迟线清零”按钮改名。ID logic-circuit、资源合同 logic-circuit-dynamic-v1、版本0.2.0、contentCode1。
+
+大厅独立清洁检出 f655d273a50eaafcf4ee162a311dcd5d47e2ac09，两轮资源生产完全一致；[大厅 CI 成功](https://github.com/xiaoxuhui/game-hub/actions/runs/39087427494)。公开签名目录 sequence15 / asset652152660 / SHA256 0eb07895d68c1a307571c726bd58158a80dc8bf3a030ecef93f2add1cac10f30；游戏 ZIP asset652150688 / 135904字节 / SHA256 63079c4dbd9686bc3f061bcf5edce845f94b1b6e3a09710653930a3dcf52feda。
+
+匿名核验全部15份历史签名目录及16个累计资源成功。其他五游戏描述完全一致，旧目录保留，未移动固定标签。大厅“立即检查”→“游戏目录”→逻辑工坊→安装，无需更换 APK。[公开发行证据](https://github.com/xiaoxuhui/game-hub/blob/main/doc/evidence/n22-logic-workshop-release.md)。
