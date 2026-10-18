@@ -130,49 +130,41 @@
     const d=defs[id];if(!d)return reject('定义缺失');
     visiting.add(id);
     try{
-      if(d.nodes.some(n=>n.type==='delay'))return reject('含延迟线');
-      const children=new Map();
-      for(const n of d.nodes)if(n.type==='custom'){
-        const child=tableFor(n.def,defs,tables,visiting);if(!child.eligible)return reject(child.reason);
-        children.set(n.id,child);
-      }
-      const local={nodes:d.nodes,wires:d.wires,definitions:defs},net=nets(local),drivers=new Map();
-      for(const g of net.groups.values()){
-        if(g.drivers.size>1||new Set([...g.ports.values()].map(p=>p.width)).size>1)return reject('连接错误');
-        const driver=[...g.drivers.values()][0];if(driver)for(const p of g.ports.values())if(p.dir==='in')drivers.set(key(p),driver);
-      }
-      const byId=new Map(d.nodes.map(n=>[n.id,n])),dependencies=new Map(),followers=new Map();
-      for(const n of d.nodes){const deps=new Set(ports(n,defs).filter(p=>p.dir==='in').map(p=>drivers.get(key(p))?.node).filter(Boolean));dependencies.set(n.id,deps);for(const dep of deps){if(!followers.has(dep))followers.set(dep,[]);followers.get(dep).push(n.id);}}
-      const queue=d.nodes.filter(n=>!dependencies.get(n.id).size),order=[];
-      for(let head=0;head<queue.length;head++){const n=queue[head];order.push(n);for(const target of followers.get(n.id)||[]){const deps=dependencies.get(target);deps.delete(n.id);if(!deps.size)queue.push(byId.get(target));}}
-      if(order.length!==d.nodes.length)return reject('循环依赖');
-      const rows=new Map(),inputBits=d.inputs.reduce((sum,p)=>sum+p.width,0);
-      const evaluate=ins=>{
-        const values={},outputs={},inputs=new Map(d.inputs.map((p,i)=>[p.id,ins[i]]));
-        for(const n of order){
-          const incoming=ports(n,defs).filter(p=>p.dir==='in').map(p=>{const driver=drivers.get(key(p));return driver?values[driver.node][driver.port]:Array(p.width).fill(0);});
-          if(n.type==='input')values[n.id]=[inputs.get(n.id)||bitArray(n.value||0,width(n))];
-          else if(n.type==='output'){values[n.id]=[];outputs[n.id]=incoming[0];}
-          else if(n.type==='nand')values[n.id]=[[1-(incoming[0][0]&incoming[1][0])]];
-          else if(n.type==='hub')values[n.id]=[incoming.map(bits=>bits[0])];
-          else if(n.type==='splitter')values[n.id]=incoming[0].map(bit=>[bit]);
-          else values[n.id]=children.get(n.id).lookup(incoming);
+      const registers=[];
+      for(const n of d.nodes){
+        if(n.type==='delay')registers.push({path:n.id,width:width(n)});
+        else if(n.type==='custom'){
+          const child=tableFor(n.def,defs,tables,visiting);if(!child.eligible)return reject(child.reason);
+          for(const p of child.registers)registers.push({path:n.id+'/'+p.path,width:p.width});
         }
-        return d.outputs.map(p=>outputs[p.id]);
-      };
-      const table={eligible:true,inputBits,rows,lookup(ins){const k=ins.map(bits=>bits.join('')).join('|');if(rows.has(k))return rows.get(k);const result=evaluate(ins);if(rows.size>=4096)rows.delete(rows.keys().next().value);rows.set(k,result);return result;}};
+      }
+      const local={nodes:d.nodes,wires:d.wires,definitions:defs},net=nets(local);
+      for(const g of net.groups.values())if(g.drivers.size>1||new Set([...g.ports.values()].map(p=>p.width)).size>1)return reject('连接错误');
+      const rows=new Map(),rowSizes=new Map();let cachedBytes=0;const inputBits=d.inputs.reduce((sum,p)=>sum+p.width,0),stateBits=registers.reduce((sum,p)=>sum+p.width,0),topologyCache=new Map(),scope='table:'+id;
+      const table={eligible:true,inputBits,stateBits,registers,rows,get cachedBytes(){return cachedBytes;},lookup(ins,stored=[],stats){
+        const state=registers.map((p,i)=>bitArray(stored[i]||0,p.width)),k=ins.map(bits=>bits.join('')).join('|')+'#'+state.map(bits=>bits.join('')).join('|');
+        if(rows.has(k)){if(stats)stats.tableHits++;return rows.get(k);}
+        if(stats)stats.tableMisses++;
+        const memory=Object.fromEntries(registers.map((p,i)=>[scope+'/'+p.path,packBits(state[i])])),overrides=Object.fromEntries(d.inputs.map((p,i)=>[p.id,ins[i]]));
+        const sim=simulate(local,overrides,1,{memory,scope,tables,topologyCache,stats,captureNext:true});
+        const result={outputs:d.outputs.map(p=>sim.outputs[p.id]),next:registers.map(p=>sim.nextDelayState[scope+'/'+p.path]||0),issues:sim.issues};
+        const bytes=2*(k.length+JSON.stringify(result).length);
+        if(bytes<=4*1024*1024){while(rows.size>=4096||cachedBytes+bytes>4*1024*1024){const oldest=rows.keys().next().value;cachedBytes-=rowSizes.get(oldest);rows.delete(oldest);rowSizes.delete(oldest);}rows.set(k,result);rowSizes.set(k,bytes);cachedBytes+=bytes;}return result;
+      }};
       tables.set(id,table);
-      if(inputBits<=8)for(let row=0;row<2**inputBits;row++){let offset=0;table.lookup(d.inputs.map(p=>{const bits=Array.from({length:p.width},(_,i)=>Math.floor(row/2**(offset+i))%2);offset+=p.width;return bits;}));}
+      // State tables stay sparse even when small; no exponential register enumeration.
+      if(!stateBits&&inputBits<=8)for(let row=0;row<2**inputBits;row++){let offset=0;table.lookup(d.inputs.map(p=>{const bits=Array.from({length:p.width},(_,i)=>Math.floor(row/2**(offset+i))%2);offset+=p.width;return bits;}));}
       return table;
     }finally{visiting.delete(id);}
   }
-  function definitionInfo(id,defs){const table=tableFor(id,defs,compiledTables(defs));return table.eligible?{method:'truth-table',inputBits:table.inputBits,cachedRows:table.rows.size}:{method:'circuit',reason:table.reason};}
+  function lookupState(table,ins,scope,context){return table.lookup(ins,table.registers.map(p=>context.memory[scope+'/'+p.path]||0),context.stats);}
+  function definitionInfo(id,defs){const table=tableFor(id,defs,compiledTables(defs));return table.eligible?{method:'truth-table',inputBits:table.inputBits,cachedRows:table.rows.size,...(table.stateBits?{stateBits:table.stateBits,cachedBytes:table.cachedBytes}:{})}:{method:'circuit',reason:table.reason};}
   function createSimulator(){
     let signature=null,session;
     const run=state=>{
       const next=JSON.stringify(state.definitions||{});
       if(next!==signature){signature=next;session={topologies:new Map(),results:new Map()};}
-      run.stats={topologyBuilds:0,cacheHits:0,nodeEvaluations:0,scopes:[]};
+      run.stats={topologyBuilds:0,cacheHits:0,nodeEvaluations:0,tableHits:0,tableMisses:0,scopes:[]};
       const memory=state.delayState||{},memories=new Map();
       for(const [path,value] of Object.entries(memory)){const parts=path.split('/');for(let i=1;i<parts.length;i++){const scope=parts.slice(0,i).join('/');if(!memories.has(scope))memories.set(scope,[]);memories.get(scope).push([path.slice(scope.length),value]);}}
       return simulate(state,{},0,{memory,scope:'root',session,memories,stats:run.stats});
@@ -180,7 +172,7 @@
     run.stats={};return run;
   }
   function simulationTopology(state,context){
-    const signature=JSON.stringify([state.nodes.map(({value,...n})=>n),state.wires]),cache=context.session?.topologies;
+    const signature=JSON.stringify([state.nodes.map(({value,...n})=>n),state.wires]),cache=context.topologyCache||context.session?.topologies;
     if(cache?.has(signature))return {signature,...cache.get(signature)};
     const net=nets(state),ps=new Map(state.nodes.map(n=>[n.id,ports(n,state.definitions)])),deps=new Map(),followers=new Map();
     for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g?.drivers.size===1&&[...g.ports.values()].every(q=>q.width===p.width))dependencies.add([...g.drivers.values()][0].node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
@@ -220,7 +212,7 @@
         else if(n.type==='nand')next[n.id]=[[1-(ins[0][0]&ins[1][0])]];
         else if(n.type==='hub')next[n.id]=[ins.map(v=>v[0])];
         else if(n.type==='splitter')next[n.id]=ins[0].map(v=>[v]);
-        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible)next[n.id]=table.lookup(ins);else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
+        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible){const row=lookupState(table,ins,context.scope+'/'+n.id,context);next[n.id]=row.outputs;row.issues.forEach(x=>issues.add(x));}else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id,captureNext:false});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
       }
       if(ordered||JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
     }
@@ -229,24 +221,26 @@
     const wires={},portValues={};
     for(const n of state.nodes)for(const p of ps.get(n.id))portValues[key(p)]=p.dir==='out'&&!forced.has(net.portNet.get(key(p)))?current[n.id][p.port]:read(p,current);
     for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id));const p=[...g.ports.values()][0];wires[w.id]=forced.get(g.id)||(p?read(p,current):[0]);}
-    const definitionModes={};if(depth===0&&tables)for(const id of Object.keys(defs)){const table=tableFor(id,defs,tables);definitionModes[id]=table.eligible?'真值表':table.reason;}
+    const definitionModes={};if(depth===0&&tables)for(const id of Object.keys(defs)){const table=tableFor(id,defs,tables);definitionModes[id]=table.eligible?(table.stateBits?'状态真值表':'真值表'):table.reason;}
     const result={values:current,outputs,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
+    if(context.captureNext){
+      const nextDelayState={};
+      for(const n of state.nodes){
+        const ins=ps.get(n.id).filter(p=>p.dir==='in').map(p=>read(p,current)),scope=context.scope+'/'+n.id;
+        if(n.type==='delay')nextDelayState[scope]=packBits(ins[0]);
+        else if(n.type==='custom'){
+          const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);
+          if(table?.eligible){if(!table.registers.length)continue;const row=lookupState(table,ins,scope,context);table.registers.forEach((p,i)=>nextDelayState[scope+'/'+p.path]=row.next[i]);}
+          else {const input=Object.fromEntries(d.inputs.map((p,i)=>[p.id,ins[i]])),sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,scope,captureNext:true});Object.assign(nextDelayState,sub.nextDelayState);}
+        }
+      }
+      result.nextDelayState=nextDelayState;
+    }
     if(context.session){if(context.session.results.size>=4096)context.session.results.clear();context.session.results.set(context.scope,{key:resultKey,result});}
     return result;
   }
-  // Sample every register from the same old state, including separate custom instances.
-  function step(state){
-    const memory=state.delayState||{},next={},defs=state.definitions||{},tables=compiledTables(defs);
-    function sample(local,overrides={},scope='root',depth=0){
-      const sim=simulate(local,overrides,depth,{memory,scope});
-      for(const n of local.nodes){
-        const ins=ports(n,defs).filter(p=>p.dir==='in').map(p=>sim.portValues[key(p)]);
-        if(n.type==='delay')next[scope+'/'+n.id]=packBits(ins[0]);
-        else if(n.type==='custom'&&!tableFor(n.def,defs,tables).eligible){const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);sample({nodes:d.nodes,wires:d.wires,definitions:defs},input,scope+'/'+n.id,depth+1);}
-      }
-    }
-    sample(state);return next;
-  }
+  // Every transition row is sampled from the same old register values.
+  function step(state){return simulate(state,{},0,{memory:state.delayState||{},scope:'root',captureNext:true}).nextDelayState;}
   function countComponents(state){
     // Cache one definition's composition, then add it again for EVERY placed instance.
     const memo=new Map(),visiting=new Set(),defs=state.definitions||{};
