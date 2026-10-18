@@ -123,6 +123,35 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
   }
   const sceneLayouts=new WeakMap();
   const sceneSymbols=new WeakMap();
+  function layoutIndex(view){let indexed=sceneLayouts.get(view);if(!indexed){indexed=new Map(view.layouts.map(l=>[l.scope,l]));sceneLayouts.set(view,indexed);}return indexed;}
+  function captureAnchor(view,point){
+    const indexed=layoutIndex(view),levels=[];
+    function visit(scope,p){
+      const layout=indexed.get(scope);if(!layout)return;
+      const contains=b=>p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h;
+      const distance=b=>Math.hypot(Math.max(b.x-p.x,0,p.x-b.x-b.w),Math.max(b.y-p.y,0,p.y-b.y-b.h));
+      const nearest=layout.boxes.reduce((best,b)=>!best||distance(b)<distance(best)?b:best,null),gate=layout.boxes.find(contains);
+      if(nearest){
+        const axis=(key,size)=>{const v=p[key];let left=null,right=null;for(const b of layout.boxes){if(b[key]+b[size]<=v&&(!left||distance(b)<distance(left)))left=b;if(b[key]>=v&&(!right||distance(b)<distance(right)))right=b;}
+          if(left&&right&&right[key]>left[key]+left[size])return {left:left.id,right:right.id,t:(v-left[key]-left[size])/(right[key]-left[key]-left[size])};
+          const start=nearest[key],end=start+nearest[size];return v<start?{id:nearest.id,edge:0,offset:v-start}:v>end?{id:nearest.id,edge:1,offset:v-end}:{id:nearest.id,t:(v-start)/nearest[size]};};
+        levels.push({scope,gate:gate?.id,x:axis('x','w'),y:axis('y','h')});
+      }
+      const child=(layout.children||[]).find(contains);if(child)visit(child.scope,{x:p.x-child.x,y:p.y-child.y});
+    }
+    visit(view.layouts.at(-1)?.scope,point);return {levels,point:{...point}};
+  }
+  function resolveAnchor(view,anchor){
+    const indexed=layoutIndex(view),rootScope=view.layouts.at(-1)?.scope;
+    function locate(scope){if(scope===rootScope)return {layout:indexed.get(scope),x:0,y:0};if(!rootScope||!scope.startsWith(rootScope+'/'))return null;const parent=locate(scope.slice(0,scope.lastIndexOf('/'))),child=parent?.layout?.children?.find(c=>c.scope===scope);return child?{layout:indexed.get(scope),x:parent.x+child.x,y:parent.y+child.y}:null;}
+    for(const level of anchor.levels.slice().reverse()){
+      const located=locate(level.scope);if(!located?.layout)continue;const boxes=new Map(located.layout.boxes.map(b=>[b.id,b]));
+      if(level.gate){const b=boxes.get(level.gate);if(b)return {x:located.x+b.x,y:located.y+b.y};continue;}
+      const axis=(a,key,size)=>{if(a.left){const left=boxes.get(a.left),right=boxes.get(a.right);return left&&right?left[key]+left[size]+a.t*(right[key]-left[key]-left[size]):null;}const b=boxes.get(a.id);return b?b[key]+(a.edge===undefined?a.t*b[size]:a.edge*b[size]+a.offset):null;};
+      const x=axis(level.x,'x','w'),y=axis(level.y,'y','h');if(x!==null&&y!==null)return {x:located.x+x,y:located.y+y};
+    }
+    return {...anchor.point};
+  }
   function viewportSvg(view,rect,scale=1){
     if(!view.compact)return view.svg;if(!view.sceneSvg)return '';
     let indexed=sceneLayouts.get(view);if(!indexed){indexed=new Map(view.layouts.map(l=>[l.scope,l]));sceneLayouts.set(view,indexed);}let symbols=sceneSymbols.get(view);if(!symbols){symbols=new Map(view.symbols.map(s=>[s.id,s.svg]));sceneSymbols.set(view,symbols);}
@@ -149,6 +178,6 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
     const captured={nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat,scopedWireOverrides};
     return {...build(captured,{readOnly:true,direct:true,preserveLayout:true}),source:captured};
   }
-  return {build,focus,getCacheStats,clearCache,hitTest,viewportSvg};
+  return {build,focus,getCacheStats,clearCache,hitTest,viewportSvg,captureAnchor,resolveAnchor};
 });
 if(typeof importScripts==='function'&&typeof document==='undefined')self.onmessage=e=>{try{const view=self.LogicExpanded.build(e.data.source,e.data.options);self.postMessage({id:e.data.id,view,stats:self.LogicExpanded.getCacheStats()});}catch(error){self.postMessage({id:e.data.id,error:error.message});}};
