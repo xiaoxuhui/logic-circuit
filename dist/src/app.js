@@ -179,7 +179,7 @@
   let runTimer=null;
   function stopRunning(){clearInterval(runTimer);runTimer=null;$('auto-run').textContent='自动运行';$('auto-run').setAttribute('aria-pressed','false');}
   function advance(manual=false){
-    if((expanded?.libraryView||expanded?.instanceView)&&!hasWireForces()||gesture||placement||document.querySelector('dialog[open]'))return;
+    if(expanded?.libraryView&&!hasWireForces()||gesture||placement||document.querySelector('dialog[open]'))return;
     const before=manual?snapshot():null;state.delayState=C.step(state);state.wireOverrides={};state.scopedWireOverrides={};
     if(expanded)refreshExpanded();
     if(manual&&!expanded?.libraryId)commit(before);else{render();save();}
@@ -203,7 +203,7 @@
     $('undo').disabled=!!expanded||!past.length;$('redo').disabled=!!expanded||!future.length;$('delete').disabled=!!expanded||!selected;$('rotate').disabled=!!expanded||!['node','nodes'].includes(selected?.type);$('debug').disabled=!!expanded||selected?.type!=='node'||!['nand','custom'].includes(state.nodes.find(n=>n.id===selected?.id)?.type);$('exit-gate').hidden=!expanded?.instanceView;$('back-to-circuit').hidden=!!expanded?.instanceView||!(expanded||gateEditor);$('back-to-circuit').textContent=gateEditor&&!expanded?.libraryView?'保存并返回原电路':'返回原电路';
     for(const id of ['package','import','new','wire-mode','export-clear'])$(id).disabled=!!expanded;document.querySelectorAll('.library button').forEach(b=>b.disabled=!!expanded||!!(gateEditor&&(b.dataset.deleteCustom||b.dataset.custom&&editingWouldRecurse(b.dataset.custom))));if(gateEditor)for(const id of ['import','new','export-clear'])$(id).disabled=true;
     $('node-layer').classList.toggle('read-only-view',!!expanded?.libraryView||!!expanded?.instanceView);
-    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation','reset-partial'])$(id).disabled=(!!expanded?.libraryView||!!expanded?.instanceView)&&(id!=='next-step'||!hasWireForces());
+    $('gate-view-modes').hidden=!gateEditor;$('gate-mode-edit').setAttribute('aria-pressed',String(!!gateEditor&&!expanded));$('gate-mode-view').setAttribute('aria-pressed',String(!!expanded?.libraryView));$('expand').hidden=!!gateEditor||!!expanded?.instanceView;for(const id of ['next-step','auto-run','reset-simulation','reset-partial'])$(id).disabled=expanded?.instanceView?id.startsWith('reset-'):!!expanded?.libraryView&&(id!=='next-step'||!hasWireForces());
     $('expand').disabled=!!gateEditor||!expanded&&!state.nodes.some(n=>n.type==='custom');$('expand').textContent=expanded?'全部收回':'全部展开';$('expand').setAttribute('aria-pressed',String(!!expanded));
     $('onboarding').hidden=!!gateEditor||!!expanded||!(state.nodes.length===1&&state.nodes[0].type==='nand'&&!state.wires.length);
     $('node-count').textContent=gateEditor?(expanded?.libraryView?'查看：':'编辑：')+state.definitions[gateEditor.id].name+' · '+state.nodes.length+' 个元件':expanded?expanded.view.leaves.length+' 个原始元件 · 调试':state.nodes.length+' 个元件 · '+state.wires.length+' 根导线';
@@ -214,13 +214,13 @@
     $('sim-dot').style.background=sim.issues.length?'#e5b978':'#91e6be';
     $('sim-detail').textContent=sim.issues[0]||(!state.wires.length?'未接线输入默认为 0（低电平）。':'电路正在实时响应输入变化。');
   }
-  function returnToCircuit(){wireInspectorTarget=null;delayInspectorTarget=null;if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();return;}if(!expanded||gesture||placement)return;stopRunning();if(expanded.instanceView&&expanded.parents.length){const parent=expanded.parents.pop();Object.assign(expanded,{view:parent.view,target:parent.target,debugNode:parent.debugNode,scope:parent.scope});camera={...parent.camera};refreshExpanded();render();save();return;}const previous=expanded;expanded=null;if(previous.original)state=previous.original;camera={...previous.camera};setMode(previous.mode);selected=null;if(previous.before)commit(previous.before);else{render();save();}}
+  function returnToCircuit(){wireInspectorTarget=null;delayInspectorTarget=null;if(gateEditor){if(expanded?.libraryView)setGateMode('edit');finishGateEditing();return;}if(!expanded||gesture||placement)return;if(!expanded.instanceView)stopRunning();if(expanded.instanceView&&expanded.parents.length){const parent=expanded.parents.pop();Object.assign(expanded,{view:parent.view,target:parent.target,debugNode:parent.debugNode,scope:parent.scope});camera={...parent.camera};refreshExpanded();render();save();return;}const previous=expanded;expanded=null;if(previous.original)state=previous.original;camera={...previous.camera};setMode(previous.mode);selected=null;if(previous.before)commit(previous.before);else{render();save();}}
   function enterExpanded(debugNode=null){if(gateEditor||expanded||gesture||placement||document.querySelector('dialog[open]'))return;if(!debugNode&&!state.nodes.some(n=>n.type==='custom')){toast('先在画布上放置一个自定义门');return;}try{wireInspectorTarget=null;delayInspectorTarget=null;const view=window.LogicExpanded.build(snapshot(),{debugNode});expanded={view,debugNode,camera:{...camera},mode};selected=null;setMode('pan');render();fit(true);}catch(error){toast(error.message);}}
   function toggleExpanded(){if(expanded)returnToCircuit();else enterExpanded();}
   function enterGateView(id){
     if((expanded&&!expanded.instanceView)||gateEditor||gesture||placement)return;
     try{
-      stopRunning();wireInspectorTarget=null;delayInspectorTarget=null;const scope=expanded?expanded.scope+'/'+id:'root/'+id,source=expanded?expanded.view.source:snapshot(),target=source.nodes.find(n=>n.id===id),view=window.LogicExpanded.focus(source,id);
+      wireInspectorTarget=null;delayInspectorTarget=null;const scope=expanded?expanded.scope+'/'+id:'root/'+id,source=expanded?expanded.view.source:snapshot(),target=source.nodes.find(n=>n.id===id),view=window.LogicExpanded.focus(source,id);
       if(expanded){expanded.parents.push({view:expanded.view,target:expanded.target,debugNode:expanded.debugNode,scope:expanded.scope,camera:{...camera}});Object.assign(expanded,{view,target,debugNode:id,scope});}
       else expanded={view,target,parents:[],debugNode:id,scope,instanceView:true,camera:{...camera},mode};
       selected=null;setMode('pan');render();fit();
