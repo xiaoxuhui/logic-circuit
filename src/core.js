@@ -359,6 +359,29 @@
     for(const local of [next,...Object.values(next.definitions)]){const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>local.nodes.some(n=>n.id===e.node&&n.type==='custom'&&n.def===id))){const routed=route(w.a,w.b,active,w.id);if(routed)w.via=routed.slice(1,-1);}}
     return next;
   }
+  function gateReplacementInfo(root,ownerId,nodeId,replacement){
+    const local=ownerId?root.definitions[ownerId]:root,node=local?.nodes.find(n=>n.id===nodeId);
+    if(!node||!['nand','custom'].includes(node.type)||!['nand','custom'].includes(replacement?.type))throw Error('只能替换逻辑门');
+    if(replacement.type==='custom'){
+      if(!root.definitions[replacement.def])throw Error('自定义门不存在');
+      const seen=new Set(),contains=id=>{if(id===ownerId)return true;if(seen.has(id))return false;seen.add(id);return root.definitions[id].nodes.some(n=>n.type==='custom'&&contains(n.def));};
+      if(ownerId&&contains(replacement.def))throw Error('替换会造成自定义门循环依赖');
+    }
+    const nextNode={id:node.id,x:node.x,y:node.y,...(node.rotation!==undefined?{rotation:node.rotation}:{}),...(node.label!==undefined?{label:node.label}:{}),type:replacement.type,...(replacement.type==='custom'?{def:replacement.def}:{})},oldSpec=spec(node,root.definitions),nextSpec=spec(nextNode,root.definitions);
+    const removed=local.wires.filter(w=>[w.a,w.b].some(e=>{if(e.node!==nodeId)return false;const dir=e.dir==='in'?'inputs':'outputs';return nextSpec[dir][e.port]===undefined||oldSpec[dir][e.port]!==nextSpec[dir][e.port];})).map(w=>w.id);
+    return {node:nextNode,removedWires:removed,inputs:nextSpec.inputs,outputs:nextSpec.outputs};
+  }
+  function replaceGate(root,ownerId,nodeId,replacement){
+    const info=gateReplacementInfo(root,ownerId,nodeId,replacement),next=clone(root),local=ownerId?next.definitions[ownerId]:next,removed=new Set(info.removedWires);
+    local.nodes=local.nodes.map(n=>n.id===nodeId?info.node:n);local.wires=local.wires.filter(w=>!removed.has(w.id));
+    // Resolve against the old hierarchy so old state cannot leak into the replacement.
+    const scopeInfo=path=>{let circuit=root,owner=null;for(const part of path.split('/').slice(1)){if(owner===ownerId&&part===nodeId)return {replaced:true};const n=circuit.nodes.find(n=>n.id===part);if(n?.type!=='custom')return {owner:null};owner=n.def;circuit=root.definitions[owner];}return {owner};};
+    next.delayState=Object.fromEntries(Object.entries(next.delayState||{}).filter(([path])=>!scopeInfo(path).replaced));
+    for(const [scope,forces] of Object.entries(next.scopedWireOverrides||{})){const location=scopeInfo(scope);if(location.replaced)delete next.scopedWireOverrides[scope];else if(location.owner===ownerId)for(const id of removed)delete forces[id];}
+    if(!ownerId)for(const id of removed)if(next.wireOverrides)delete next.wireOverrides[id];
+    const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>e.node===nodeId)){const ps=route(w.a,w.b,active,w.id);if(ps)w.via=ps.slice(1,-1);}
+    return ownerId?updateDefinition(next,ownerId,local):validate(next);
+  }
   function pruneDefinitions(state){
     const defs=state.definitions,keep=new Set();
     function visit(id){if(keep.has(id))return;if(!Object.hasOwn(defs,id))throw Error('自定义门不存在');keep.add(id);for(const n of defs[id].nodes)if(n.type==='custom')visit(n.def);}
@@ -396,5 +419,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
