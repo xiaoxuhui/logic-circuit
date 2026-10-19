@@ -133,6 +133,8 @@
     ws.forEach((w,i)=>{const id=find(i);if(!groups.has(id))groups.set(id,{id,drivers:new Map(),ports:new Map(),wires:[]});const g=groups.get(id);g.wires.push(w.id);wireNet.set(w.id,id);for(const e of [w.a,w.b])if(e.node){const k=key(e),p=portByKey.get(k);g.ports.set(k,p);portNet.set(k,id);if(e.dir==='out')g.drivers.set(k,p);}});
     // A free endpoint placed exactly on a port also attaches to it.
     for(const p of allPorts)for(const {i,p:e} of free)if(distance(e,p)<0.05){const g=groups.get(find(i)),k=key(p);g.ports.set(k,p);portNet.set(k,g.id);if(p.dir==='out')g.drivers.set(k,p);}
+    const adapters=new Set(state.nodes.filter(n=>n.type==='splitter').map(n=>n.id));
+    for(const g of groups.values()){const fixed=[...g.ports.values()].filter(p=>p.dir!=='in'||!adapters.has(p.node));g.width=fixed[0]?.width||g.ports.values().next().value?.width||1;g.widthMismatch=fixed.some(p=>p.width!==g.width);}
     return {groups,portNet,wireNet};
   }
   const tableCache=new WeakMap(),sharedTableCache=new Map();
@@ -160,7 +162,7 @@
         }
       }
       const local={nodes:d.nodes,wires:d.wires,definitions:defs},net=nets(local);
-      for(const g of net.groups.values())if(new Set([...g.ports.values()].map(p=>p.width)).size>1)return reject('连接错误');
+      for(const g of net.groups.values())if(g.widthMismatch)return reject('连接错误');
       const rows=new Map(),rowSizes=new Map();let cachedBytes=0;const inputBits=d.inputs.reduce((sum,p)=>sum+p.width,0),stateBits=registers.reduce((sum,p)=>sum+p.width,0),topologyCache=new Map(),scope='table:'+id;
       const table={eligible:true,inputBits,stateBits,registers,rows,get cachedBytes(){return cachedBytes;},lookup(ins,stored=[],stats){
         const state=registers.map((p,i)=>bitArray(stored[i]||0,p.width)),k=ins.map(bits=>bits.join('')).join('|')+'#'+state.map(bits=>bits.join('')).join('|');
@@ -198,7 +200,7 @@
     const signature=JSON.stringify([state.nodes.map(({value,...n})=>n),state.wires]),cache=context.topologyCache||context.session?.topologies;
     if(cache?.has(signature))return {signature,...cache.get(signature)};
     const net=nets(state),ps=new Map(state.nodes.map(n=>[n.id,ports(n,state.definitions)])),deps=new Map(),followers=new Map();
-    for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g&&[...g.ports.values()].every(q=>q.width===p.width))for(const driver of g.drivers.values())dependencies.add(driver.node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
+    for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g&&!g.widthMismatch)for(const driver of g.drivers.values())dependencies.add(driver.node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
     const order=state.nodes.filter(n=>!deps.get(n.id).size).map(n=>n.id);
     for(let head=0;head<order.length;head++)for(const id of followers.get(order[head])||[]){const d=deps.get(id);d.delete(order[head]);if(!d.size)order.push(id);}
     const topology={net,ps,order:order.length===state.nodes.length?order:null};
@@ -220,9 +222,9 @@
     const low=w=>Array(w).fill(0);
     for(const n of state.nodes)values[n.id]=spec(n,defs).outputs.map(low);
     for(const g of net.groups.values()){
-      if(new Set([...g.ports.values()].map(p=>p.width)).size>1)issues.add('导线两端位宽不一致，请使用集线器或分线器');
+      if(g.widthMismatch)issues.add('导线两端位宽不一致，请使用集线器或分线器');
     }
-    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);if(forced.has(id))return bitArray(packBits(forced.get(id)),p.width);const g=net.groups.get(id);if([...g.ports.values()].some(q=>q.width!==p.width))return low(p.width);if(g.drivers.size===1){const d=g.drivers.values().next().value;return prev[d.node]?.[d.port]||low(p.width);}const result=low(p.width);for(const d of g.drivers.values()){const bits=prev[d.node]?.[d.port];if(bits)for(let i=0;i<p.width;i++)result[i]|=bits[i]||0;}return result;}
+    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);if(forced.has(id))return bitArray(packBits(forced.get(id)),p.width);const g=net.groups.get(id);if(g.widthMismatch)return low(p.width);if(g.drivers.size===1){const d=g.drivers.values().next().value,bits=prev[d.node]?.[d.port];return !bits?low(p.width):bits.length===p.width?bits:Array.from({length:p.width},(_,i)=>bits[i]||0);}const result=low(p.width);for(const d of g.drivers.values()){const bits=prev[d.node]?.[d.port];if(bits)for(let i=0;i<p.width;i++)result[i]|=bits[i]||0;}return result;}
     let current=values,settled=false;
     const byId=new Map(state.nodes.map(n=>[n.id,n])),ordered=topology.order&&context.useTopological!==false?topology.order.map(id=>byId.get(id)):null;
     for(let step=0;step<(ordered?1:Math.min(state.nodes.length+4,512));step++){
@@ -244,7 +246,7 @@
     for(const n of state.nodes)if(n.type==='output')outputs[n.id]=read(ps.get(n.id)[0],current);
     const wires={},portValues={};
     for(const n of state.nodes)for(const p of ps.get(n.id))portValues[key(p)]=p.dir==='out'&&!forced.has(net.portNet.get(key(p)))?current[n.id][p.port]:read(p,current);
-    for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id));const p=[...g.ports.values()][0];wires[w.id]=forced.get(g.id)||(p?read(p,current):[0]);}
+    for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id)),p=g.drivers.values().next().value||[...g.ports.values()].find(p=>p.width===g.width)||g.ports.values().next().value;wires[w.id]=forced.get(g.id)||(p?read(p,current):[0]);}
     const definitionModes={};if(depth===0&&tables)for(const id of Object.keys(defs)){const table=tableFor(id,defs,tables);definitionModes[id]=table.eligible?(table.stateBits?'状态真值表':'真值表'):table.reason;}
     const result={values:current,outputs,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
     if(context.captureNext){
