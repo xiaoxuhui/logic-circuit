@@ -12,6 +12,7 @@
     "src/core.js",
     "src/expanded.js",
     "src/app.js",
+    "src/minecraft-redstone.js",
     "src/minecraft-model.js",
     "src/minecraft-view.js",
     "src/vendor/three.min.js",
@@ -29,3 +30,4 @@
   "bridgeProtocol": 1,
   "offline": true
 }
+
