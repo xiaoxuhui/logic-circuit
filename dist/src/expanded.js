@@ -33,10 +33,17 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
   }
   function getCacheStats(){return {...lastStats,entries:templates.size,bytes:templateBytes,structureBytes,maxEntries:MAX_CACHE_ENTRIES,maxBytes:MAX_CACHE_BYTES};}
   function clearCache(){templates.clear();structures.clear();templateBytes=structureBytes=0;lastStats={hits:0,misses:0,circuitsBuilt:0,evictions:0};}
+  function estimateDisplayCost(source){
+    const defs=source.definitions||{},memo=new Map(),visiting=new Set();
+    function definition(id){if(memo.has(id))return memo.get(id);if(visiting.has(id)||!defs[id])return Infinity;visiting.add(id);const cost=circuit(defs[id]);visiting.delete(id);memo.set(id,cost);return cost;}
+    function circuit(local){let cost=(local.wires?.length||0)*24;for(const n of local.nodes){if(n.type==='custom'){const d=defs[n.def];cost+=12+8*((d?.inputs.length||0)+(d?.outputs.length||0))+definition(n.def);}else if(['input','output'].includes(n.type))cost+=14+5*(n.bits||1);else if(['hub','splitter'].includes(n.type))cost+=12+4*(n.bits||1);else cost+=24;}return cost;}
+    return circuit(source);
+  }
+  const shouldCompact=source=>estimateDisplayCost(source)>12000;
   function build(source,options={}){
     const maxLayers=options.maxLayers??Infinity;
     if(maxLayers!==Infinity&&(!Number.isInteger(maxLayers)||maxLayers<1||maxLayers>C.MAX_DEPTH))throw Error('展开层数请输入 1–'+C.MAX_DEPTH+' 之间的整数');
-    const compact=options.compact??(!options.direct&&Object.values(C.countComponents(source)).reduce((a,b)=>a+b,0)>5000);
+    const compact=options.compact??(!options.direct&&shouldCompact(source));
     const simulationContext=C.createSimulationContext(source),defs=source.definitions,leaves=[],frames=[],layouts=[],stats={hits:0,misses:0,circuitsBuilt:0,evictions:0},definitionIds=new Map(),visiting=new Set(),memories=new Map(),forces=new Map();let total=0;lastStats=stats;
     const structure=(local,ports)=>internStructure(JSON.stringify([local.nodes.map(n=>n.type==='input'?{...n,value:undefined}:n),local.wires,ports,local.nodes.filter(n=>n.type==='custom').map(n=>[n.def,definitionId(n.def)])]));
     function definitionId(id){if(definitionIds.has(id))return definitionIds.get(id);if(visiting.has(id))throw Error('自定义门循环依赖');visiting.add(id);const d=defs[id];if(!d)throw Error('自定义门不存在');const result=structure(d,[d.name,d.inputs,d.outputs,d.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0])]);visiting.delete(id);definitionIds.set(id,result);return result;}
@@ -178,6 +185,6 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
     const captured={nodes,wires:C.clone(definition.wires),definitions:source.definitions,delayState:memory,displayFormat:source.displayFormat,scopedWireOverrides};
     return {...build(captured,{readOnly:true,direct:true,preserveLayout:true}),source:captured};
   }
-  return {build,focus,getCacheStats,clearCache,hitTest,viewportSvg,captureAnchor,resolveAnchor};
+  return {build,focus,getCacheStats,clearCache,hitTest,viewportSvg,captureAnchor,resolveAnchor,estimateDisplayCost,shouldCompact};
 });
 if(typeof importScripts==='function'&&typeof document==='undefined')self.onmessage=e=>{try{const view=self.LogicExpanded.build(e.data.source,e.data.options);self.postMessage({id:e.data.id,view,stats:self.LogicExpanded.getCacheStats()});}catch(error){self.postMessage({id:e.data.id,error:error.message});}};
