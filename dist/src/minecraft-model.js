@@ -123,9 +123,9 @@
       const X=dx=>x+(reversed?10-dx:dx);
       const line=(from,to,Z,N,on)=>{for(let dx=from;dx<=to;dx++)dust(X(dx),1,z+Z,N,on);};
       const repeat=(dx,Z,N,on,delay=1)=>device('repeater',X(dx),1,z+Z,N,on,{delay,facing:reversed?2:0});
-      const entry=(N,Z)=>{line(-2,1,Z,N,false);const q=world.at({x:X(-2),y:1,z:z+Z});q.tail=4;terminal(N,q);};
+      const entry=(N,Z)=>{line(-2,1,Z,N,false);const q=world.at({x:X(-2),y:1,z:z+Z});q.tail=4;q.entryDirection={x:reversed?-1:1,z:0};terminal(N,q);};
       if(type==='delay'){
-        line(-2,0,4,p.inputs[0],false);world.at({x:X(-2),y:1,z:z+4}).tail=2;terminal(p.inputs[0],world.at({x:X(-2),y:1,z:z+4}));repeat(1,4,net,p.on,Math.min(4,Math.max(1,p.node.redstoneDelay||1))).role='delay';line(2,2,4,net,p.on);const out=world.at({x:X(2),y:1,z:z+4});out.capacity=15;terminal(net,out,true);netSignal.set(net,p.on);
+        line(-2,0,4,p.inputs[0],false);world.at({x:X(-2),y:1,z:z+4}).tail=2;world.at({x:X(-2),y:1,z:z+4}).entryDirection={x:reversed?-1:1,z:0};terminal(p.inputs[0],world.at({x:X(-2),y:1,z:z+4}));repeat(1,4,net,p.on,Math.min(4,Math.max(1,p.node.redstoneDelay||1))).role='delay';line(2,2,4,net,p.on);const out=world.at({x:X(2),y:1,z:z+4});out.capacity=15;terminal(net,out,true);netSignal.set(net,p.on);
       }else if(type==='nand'){
         const outLocal=net,tied=p.inputs[0]===p.inputs[1]&&!!p.forwardInputs?.[0]===!!p.forwardInputs?.[1];for(let i=0;i<(tied?1:2);i++){const Z=tied?4:i?5:3,N=p.inputs[i];entry(N,Z);dust(X(2),1,z+Z,N,!!p.inputBits[i]);if(p.forwardInputs?.[i]){repeat(3,Z,N,!!p.inputBits[i]).role='isolation';line(4,6,Z,outLocal,!!p.inputBits[i]);}else{put('support',X(3),1,z+Z);device('torch',X(4),1,z+Z,outLocal,!p.inputBits[i],{attached:{x:X(3),y:1,z:z+Z}});line(5,6,Z,outLocal,!p.inputBits[i]);}}dust(X(6),1,z+4,outLocal,p.on);line(7,8,4,net,p.on);const out=world.at({x:X(8),y:1,z:z+4});out.capacity=tied?(p.forwardInputs?.[0]?11:12):p.forwardInputs?.some(Boolean)?10:11;terminal(net,out,true);netSignal.set(net,p.on);
       }
@@ -144,7 +144,9 @@
     }
     currentOwner=null;
     const tileBlocked=p=>p.y<=3&&(reserved.get(Math.floor(p.x/16)+','+Math.floor(p.z/16))||[]).some(rect=>p.x>=rect.minX&&p.x<=rect.maxX&&p.z>=rect.minZ&&p.z<=rect.maxZ);
-    function legal(p,net){const old=world.at(p);if(old)return old.kind==='dust'&&old.net===net&&!old.routingLocked;if(tileBlocked(p))return false;const below=world.at({...p,y:p.y-1});if(below?.kind==='lamp'||below&&!R.supports(below))return false;
+    // Reserve an arrival cell so earlier wires cannot surround later inputs.
+    const arrivals=new Map();for(const [net,group] of terminals)for(const t of group.targets){const d=t.entryDirection;if(!d)continue;const center={x:t.x-d.x,y:t.y,z:t.z-d.z};for(const offset of [{x:0,z:0},...R.directions]){const key=(center.x+offset.x)+','+(center.z+offset.z),list=arrivals.get(key)||[];list.push({net,y:t.y});arrivals.set(key,list);}}
+    function legal(p,net){if((arrivals.get(p.x+','+p.z)||[]).some(a=>a.net!==net&&Math.abs(a.y-p.y)<=1))return false;const old=world.at(p);if(old)return old.kind==='dust'&&old.net===net&&!old.routingLocked;if(tileBlocked(p))return false;const below=world.at({...p,y:p.y-1});if(below?.kind==='lamp'||below&&!R.supports(below))return false;
       for(const d of R.directions)for(let dy=-1;dy<=1;dy++){const q=world.at({x:p.x+d.x,y:p.y+dy,z:p.z+d.z});if(q?.routingLocked&&d.x*q.approach.z-d.z*q.approach.x)return false;if(q&&['dust','repeater','torch','lever','lamp'].includes(q.kind)&&q.net!==net)return false;}
       const under=world.at({...p,y:p.y-2});if(under?.kind==='torch')return false;return true;
     }
