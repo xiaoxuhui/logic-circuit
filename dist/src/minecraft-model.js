@@ -53,7 +53,13 @@
       }
     }
     visit(state,'root');for(const p of primitives){p.inputs=p.inputs.map(find);if(p.output)p.output=find(p.output);}for(const p of forced)p.token=find(p.token);
-    return simplify({state,records,primitives,forced});
+    // Trace physical dependencies from observable outputs, including delay feedback.
+    // Private sinks and the inputs used only by them do not need Minecraft blocks.
+    const producers=new Map(),needed=new Set(),seenNets=new Set(),queue=primitives.filter(p=>p.node.type==='output');
+    for(const p of primitives)if(p.output){if(!producers.has(p.output))producers.set(p.output,[]);producers.get(p.output).push(p);}
+    for(let i=0;i<queue.length;i++){const p=queue[i];if(needed.has(p))continue;needed.add(p);for(const token of p.inputs){if(seenNets.has(token))continue;seenNets.add(token);for(const driver of producers.get(token)||[])queue.push(driver);}}
+    const retained=primitives.filter(p=>needed.has(p)),retainedRecords=new Set(retained.map(p=>p.record)),sourceNands=primitives.filter(p=>p.node.type==='nand').length;
+    return simplify({state,records:records.filter(r=>retainedRecords.has(r)),primitives:retained,forced:forced.filter(p=>seenNets.has(p.token)),sourceNands});
   }
   // Simplify only the conversion copy. Registers and combinational feedback stay physical.
   function simplify(graph){
@@ -88,7 +94,7 @@
     graph.primitives=kept.filter(p=>p.node.type!=='nand'||active.has(p));for(const p of graph.forced)p.token=resolve(p.token);
     const remaining=new Set(graph.primitives.map(p=>p.record));for(const record of graph.records)if(record.type==='nand'&&!remaining.has(record))record.optimized=true;
     graph.layoutNands=ready.filter(p=>active.has(p)).map(p=>p.record);
-    graph.optimization={sourceNands:nands.length,renderedNands:active.size,removedNands:nands.length-active.size,cancelledPairs};return graph;
+    graph.optimization={sourceNands:graph.sourceNands,renderedNands:active.size,removedNands:graph.sourceNands-active.size,cancelledPairs};return graph;
   }
   function build(source,progress=()=>{}){
     progress(5,'正在逐位展开端口连接…');const graph=compile(source),world=new R.World(),terminals=new Map(),warnings=[],unrouted=[],reserved=new Map(),levers=[],lamps=[];

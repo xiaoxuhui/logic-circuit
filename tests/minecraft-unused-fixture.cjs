@@ -1,0 +1,3 @@
+const C=require('../src/core.js');
+const n=(id,type,x=0,y=0,extra={})=>({id,type,x,y,...extra}),w=(id,a,b,port=0)=>({id,a:{node:a,dir:'out',port:0},b:{node:b,dir:'in',port}});
+module.exports=function fixture(){const sink=C.makeDefinition({definitions:{},nodes:[n('i','input'),n('g','nand',200),n('d','delay',400)],wires:[w('a','i','g'),w('b','i','g',1),w('d','g','d')]},'无输出元件');return {version:1,definitions:{sink},nodes:[n('a','input'),n('b','input',0,160),n('g','nand',200),n('o','output',500),n('sink','custom',200,200,{def:'sink'}),n('sink2','custom',200,400,{def:'sink'})],wires:[w('a','a','g'),w('b','a','g',1),w('q','g','o'),w('shared','a','sink'),w('exclusive','b','sink2')]};};
