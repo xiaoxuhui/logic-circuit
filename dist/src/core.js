@@ -159,7 +159,7 @@
         }
       }
       const local={nodes:d.nodes,wires:d.wires,definitions:defs},net=nets(local);
-      for(const g of net.groups.values())if(g.drivers.size>1||new Set([...g.ports.values()].map(p=>p.width)).size>1)return reject('连接错误');
+      for(const g of net.groups.values())if(new Set([...g.ports.values()].map(p=>p.width)).size>1)return reject('连接错误');
       const rows=new Map(),rowSizes=new Map();let cachedBytes=0;const inputBits=d.inputs.reduce((sum,p)=>sum+p.width,0),stateBits=registers.reduce((sum,p)=>sum+p.width,0),topologyCache=new Map(),scope='table:'+id;
       const table={eligible:true,inputBits,stateBits,registers,rows,get cachedBytes(){return cachedBytes;},lookup(ins,stored=[],stats){
         const state=registers.map((p,i)=>bitArray(stored[i]||0,p.width)),k=ins.map(bits=>bits.join('')).join('|')+'#'+state.map(bits=>bits.join('')).join('|');
@@ -197,7 +197,7 @@
     const signature=JSON.stringify([state.nodes.map(({value,...n})=>n),state.wires]),cache=context.topologyCache||context.session?.topologies;
     if(cache?.has(signature))return {signature,...cache.get(signature)};
     const net=nets(state),ps=new Map(state.nodes.map(n=>[n.id,ports(n,state.definitions)])),deps=new Map(),followers=new Map();
-    for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g?.drivers.size===1&&[...g.ports.values()].every(q=>q.width===p.width))dependencies.add([...g.drivers.values()][0].node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
+    for(const n of state.nodes){const dependencies=new Set();if(!['input','delay'].includes(n.type))for(const p of ps.get(n.id).filter(p=>p.dir==='in')){const g=net.groups.get(net.portNet.get(key(p)));if(g&&[...g.ports.values()].every(q=>q.width===p.width))for(const driver of g.drivers.values())dependencies.add(driver.node);}deps.set(n.id,dependencies);for(const id of dependencies){if(!followers.has(id))followers.set(id,[]);followers.get(id).push(n.id);}}
     const order=state.nodes.filter(n=>!deps.get(n.id).size).map(n=>n.id);
     for(let head=0;head<order.length;head++)for(const id of followers.get(order[head])||[]){const d=deps.get(id);d.delete(order[head]);if(!d.size)order.push(id);}
     const topology={net,ps,order:order.length===state.nodes.length?order:null};
@@ -219,10 +219,9 @@
     const low=w=>Array(w).fill(0);
     for(const n of state.nodes)values[n.id]=spec(n,defs).outputs.map(low);
     for(const g of net.groups.values()){
-      if(g.drivers.size>1)issues.add('一条网络连接了多个输出，请分开连线');
       if(new Set([...g.ports.values()].map(p=>p.width)).size>1)issues.add('导线两端位宽不一致，请使用集线器或分线器');
     }
-    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);if(forced.has(id))return bitArray(packBits(forced.get(id)),p.width);const g=net.groups.get(id);if(g.drivers.size!==1||[...g.ports.values()].some(q=>q.width!==p.width))return low(p.width);const d=[...g.drivers.values()][0];return prev[d.node]?.[d.port]||low(p.width);}
+    function read(p,prev){const id=net.portNet.get(key(p));if(id===undefined)return low(p.width);if(forced.has(id))return bitArray(packBits(forced.get(id)),p.width);const g=net.groups.get(id);if([...g.ports.values()].some(q=>q.width!==p.width))return low(p.width);if(g.drivers.size===1){const d=g.drivers.values().next().value;return prev[d.node]?.[d.port]||low(p.width);}const result=low(p.width);for(const d of g.drivers.values()){const bits=prev[d.node]?.[d.port];if(bits)for(let i=0;i<p.width;i++)result[i]|=bits[i]||0;}return result;}
     let current=values,settled=false;
     const byId=new Map(state.nodes.map(n=>[n.id,n])),ordered=topology.order&&context.useTopological!==false?topology.order.map(id=>byId.get(id)):null;
     for(let step=0;step<(ordered?1:Math.min(state.nodes.length+4,512));step++){
