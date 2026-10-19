@@ -28,6 +28,10 @@
       const a=batch.data;for(let i=0;i<a.length;i+=STRIDE){const x=a[i],y=a[i+1],z=a[i+2],w=a[i+3]/2,h=a[i+4]/2,d=a[i+5]/2;if(rayBoxDistance(origin,direction,x-w,y-h,z-d,x+w,y+h,z+d,limit)!==Infinity)return null;}
     }return selected;
   }
+  function bridgePaths(points,world,net){
+    if(points.length<2||points.some(p=>p.y!==points[0].y))return [];const crosses=[];for(let i=0;i<points.length;i++){const b=world.at(points[i]);if(b&&['dust','repeater'].includes(b.kind)&&b.net!==net)crosses.push(i);}if(!crosses.length)return [];
+    const paths=[];for(let height=2;height<=Math.min(7,8-points[0].y);height++){const lifts=new Uint8Array(points.length);for(const c of crosses)for(let i=Math.max(0,c-height);i<=Math.min(points.length-1,c+height);i++)lifts[i]=Math.max(lifts[i],Math.min(height,height+1-Math.abs(i-c)));if(lifts[0]||lifts.at(-1))continue;paths.push(points.map((p,i)=>({...p,y:p.y+lifts[i]})));}return paths;
+  }
   // Port-bit aliases eliminate hubs, splitters and hierarchy boundaries, never a bus-valued block.
   function compile(source){
     const state=C.validate(source),parent=new Map(),records=[],primitives=[],forced=[],netCache=new Map(),context=C.createSimulationContext(state);
@@ -145,12 +149,12 @@
       const under=world.at({...p,y:p.y-2});if(under?.kind==='torch')return false;return true;
     }
     const interpolate=points=>{const out=[points[0]];for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],length=Math.max(Math.abs(b.x-a.x),Math.abs(b.y-a.y),Math.abs(b.z-a.z));for(let n=1;n<=length;n++)out.push({x:a.x+(b.x-a.x)*n/length,y:a.y+(b.y-a.y)*n/length,z:a.z+(b.z-a.z)*n/length});}return out;};
-    function pathOK(path,net){const planned=new Set(path.map(R.key));return path.every(p=>legal(p,net)&&!planned.has(R.key({...p,y:p.y-1})));}
-    function route(a,b,net){const A={x:a.x,y:a.y,z:a.z},B={x:b.x,y:b.y,z:b.z};if(A.y===B.y){const candidates=[[A,{...A,x:B.x},B],[A,{...A,z:B.z},B]];for(const offset of [2,-2,4,-4,8,-8])candidates.push([A,{...A,x:A.x+offset},{...B,x:A.x+offset},B]);for(const points of candidates){const ps=interpolate(points);if(pathOK(ps,net))return ps;}}
+    function pathOK(path,net){const planned=new Set(path.map(R.key)),supports=new Set(path.map(p=>R.key({...p,y:p.y-1}))),headBlocked=p=>world.at(p)||planned.has(R.key(p))||supports.has(R.key(p));return path.every((p,i)=>{const prev=path[i-1];if(prev&&(Math.abs(p.y-prev.y)>1||p.y>prev.y&&headBlocked({...prev,y:prev.y+1})||p.y<prev.y&&headBlocked({...p,y:p.y+1})))return false;return legal(p,net)&&!planned.has(R.key({...p,y:p.y-1}));});}
+    function route(a,b,net){const A={x:a.x,y:a.y,z:a.z},B={x:b.x,y:b.y,z:b.z};if(A.y===B.y){const direct=[[A,{...A,x:B.x},B],[A,{...A,z:B.z},B]].map(interpolate);for(const ps of direct)if(pathOK(ps,net))return ps;for(const ps of direct)for(const bridge of bridgePaths(ps,world,net))if(pathOK(bridge,net))return bridge;for(const offset of [2,-2,4,-4,8,-8]){const ps=interpolate([A,{...A,x:A.x+offset},{...B,x:A.x+offset},B]);if(pathOK(ps,net))return ps;}}
       const heap=[],best=new Map(),distance=p=>Math.abs(p.x-B.x)+Math.abs(p.z-B.z)+Math.abs(p.y-B.y),push=r=>{let i=heap.length;heap.push(r);while(i){const j=(i-1)>>1;if(heap[j].f<=r.f)break;heap[i]=heap[j];i=j;}heap[i]=r;},pop=()=>{const result=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let j=i*2+1;if(j+1<heap.length&&heap[j+1].f<heap[j].f)j++;if(last.f<=heap[j].f)break;heap[i]=heap[j];i=j;}heap[i]=last;}return result;};
       const minX=Math.min(A.x,B.x)-16,maxX=Math.max(A.x,B.x)+16,minZ=Math.min(A.z,B.z)-16,maxZ=Math.max(A.z,B.z)+16;push({p:A,g:0,f:distance(A),prev:null});best.set(R.key(A),0);
       for(let count=0;heap.length&&count<14000;count++){const r=pop();if(r.g!==best.get(R.key(r.p)))continue;if(R.key(r.p)===R.key(B)){const ps=[];for(let n=r;n;n=n.prev)ps.push(n.p);ps.reverse();if(pathOK(ps,net))return ps;continue;}
-        for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>8||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ||!legal(p,net))continue;if(dy>0&&world.at({...r.p,y:r.p.y+1}))continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity))continue;best.set(k,g);push({p,g,f:g+distance(p),prev:r});}
+        for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>8||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ||!legal(p,net))continue;if(dy>0&&world.at({...r.p,y:r.p.y+1}))continue;let overlaps=false;for(let ancestor=r;ancestor;ancestor=ancestor.prev)if(ancestor.p.x===p.x&&ancestor.p.z===p.z){overlaps=true;break;}if(overlaps)continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity))continue;best.set(k,g);push({p,g,f:g+distance(p),prev:r});}
       }return null;
     }
     progress(35,'正在铺设逐位红石线路与支撑…');const paths=[];let done=0;
@@ -164,9 +168,9 @@
         if(chosen<0){warnings.push('一条长线缺少可用的中继直段');break;}const b=world.at(ps[chosen]),a=ps[chosen-1],c=ps[chosen+1];b.kind='repeater';b.role='buffer';b.facing=R.directions.findIndex(d=>d.x===Math.sign(c.x-a.x)&&d.z===Math.sign(c.z-a.z));b.delay=1;b.on=!!netSignal.get(path.net);cursor=chosen;strength=16;
       }}
     const errors=world.validate();if(errors.length)throw Error(errors[0]);if(unrouted.length)warnings.push(unrouted.length+' 条连接未能安全布通，已留空，未使用穿透线路');if(graph.primitives.some(p=>p.node.type==='delay'))warnings.push('原延迟线逐位转换为 1–4 红石刻（2–8 游戏刻）中继器，物理计时与原“下一步”寄存器不同');
-    progress(80,'正在验证红石连接并生成方块实例…');const sim=new R.Simulator(world);sim.drain();const batches=new Map(),bounds={min:{x:Infinity,y:Infinity,z:Infinity},max:{x:-Infinity,y:-Infinity,z:-Infinity}};let instanceCount=0;
+    progress(80,'正在验证红石连接并生成方块实例…');const sim=new R.Simulator(world);sim.drain();const batches=new Map(),bounds={min:{x:Infinity,y:Infinity,z:Infinity},max:{x:-Infinity,y:-Infinity,z:-Infinity}};let instanceCount=0,maxWireHeight=1;
     function render(b,kind,x,y,z,w=1,h=1,d=1,yaw=0,tilt=0){const k=kind+':'+Math.floor(x/192)+':'+Math.floor(z/192),batch=batches.get(k)||{kind,key:k,values:[]};if(!batches.has(k))batches.set(k,batch);const index=batch.values.length/STRIDE,color=tint(b,kind);batch.values.push(x,y,z,w,h,d,yaw,...color,tilt);(b.renders||(b.renders=[])).push({key:k,index,kind});instanceCount++;for(const axis of ['x','y','z']){const v={x,y,z}[axis],extent={x:w,y:h,z:d}[axis]/2;bounds.min[axis]=Math.min(bounds.min[axis],v-extent);bounds.max[axis]=Math.max(bounds.max[axis],v+extent);}}
-    for(const b of world.cells.values()){const x=b.x+.5,y=b.y,z=b.z+.5;
+    for(const b of world.cells.values()){if(['dust','repeater'].includes(b.kind))maxWireHeight=Math.max(maxWireHeight,b.y);const x=b.x+.5,y=b.y,z=b.z+.5;
       if(b.kind==='support')render(b,'support',x,y+.5,z);
       else if(b.kind==='slab')render(b,'slab',x,y+.75,z,1,.5,1);
       else if(b.kind==='dust'){const directions=world.dustDirections(b);if(directions.has(0)||directions.has(2)){const from=directions.has(2)?-.5:-.05,to=directions.has(0)?.5:.05;render(b,'dust',x+(from+to)/2,y+.035,z,to-from,.045,.1);}if(directions.has(1)||directions.has(3)){const from=directions.has(3)?-.5:-.05,to=directions.has(1)?.5:.05;render(b,'dust',x,y+.035,z+(from+to)/2,.1,.045,to-from);}for(const q of world.dustNeighbors(b))if(q.y===b.y+1){const dx=q.x-b.x,dz=q.z-b.z;render(b,'dust',x+dx*.5,y+.5,z+dz*.5,dx?.035:.1,1,dz?.035:.1);}}
@@ -176,9 +180,9 @@
       else if(b.kind==='lamp')render(b,'lamp',x,y+.5,z);
     }
     if(!instanceCount){bounds.min={x:-1,y:0,z:-1};bounds.max={x:1,y:1,z:1};}for(const item of [...levers,...lamps]){item.renders=world.cells.get(item.key).renders;item.on=!!world.cells.get(item.key).on;}const focus=levers.slice().sort((a,b)=>(a.source?.y??Infinity)-(b.source?.y??Infinity)||(a.source?.x??Infinity)-(b.source?.x??Infinity)||b.bit-a.bit)[0]||graph.records[0]||{x:0,y:1,z:0};
-    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:new Float32Array(b.values)})),instanceCount,components:graph.records,bounds,focus,library:'内置红石方块',snapshot:true,physical:true,optimization:graph.optimization,levers,lamps,warnings,unrouted,world,simulation:sim};
+    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:new Float32Array(b.values)})),instanceCount,components:graph.records,bounds,focus,library:'内置红石方块',snapshot:true,physical:true,maxWireHeight,optimization:graph.optimization,levers,lamps,warnings,unrouted,world,simulation:sim};
   }
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,advanceCamera,look,compile,build,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,bridgePaths,advanceCamera,look,compile,build,tint,updates};
 });

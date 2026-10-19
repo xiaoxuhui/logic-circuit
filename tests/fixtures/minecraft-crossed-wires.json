@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "definitions": {},
+  "nodes": [
+    {
+      "id": "a",
+      "type": "input",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "b",
+      "type": "input",
+      "x": 0,
+      "y": 80
+    },
+    {
+      "id": "p",
+      "type": "output",
+      "x": 240,
+      "y": 0
+    },
+    {
+      "id": "q",
+      "type": "output",
+      "x": 240,
+      "y": 80
+    }
+  ],
+  "wires": [
+    {
+      "id": "a-q",
+      "a": {
+        "node": "a",
+        "dir": "out",
+        "port": 0
+      },
+      "b": {
+        "node": "q",
+        "dir": "in",
+        "port": 0
+      }
+    },
+    {
+      "id": "b-p",
+      "a": {
+        "node": "b",
+        "dir": "out",
+        "port": 0
+      },
+      "b": {
+        "node": "p",
+        "dir": "in",
+        "port": 0
+      }
+    }
+  ]
+}
