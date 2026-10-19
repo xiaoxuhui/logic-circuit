@@ -32,3 +32,6 @@ VERIFIED：公开来源为 https://github.com/xiaoxuhui/logic-circuit ，固定�
 
 ## 0.2.8（2026-10-18）
 修复端口固定长出口遗漏窄通道的问题。固定来源3a88e24b45f4469ccafd8eaca54472dc100fd01d，111项核心检查和19套真实浏览器CI通过；大厅75b572a固定生产，0.2.8/contentCode9/目录23已发布，23份历史签名与24个累计资源匿名校验成功。详情见0.2.8测试报告及大厅doc/evidence/n23/sequence23。
+
+## 0.3.0（2026-10-19）
+来源abdebbd607d83072fc0d44d5a93a2d61ed21d2d0，v0.3.0标签、184项单测和36套公开浏览器回归通过，来源CI39269689531成功。大厅生产26a91af6eb7444cd4a294432365a2c371d07d3c1的86项检查及CI39269779845成功。目录24/contentCode10已发布，24份签名目录及25个累计资源匿名核验通过；ZIP asset656523461、SHA256 128a47f78490a52ca9c1a4a56699ac7243e8b556cad304132a25dda6cdb19faa。来源与大厅发行记录见0.3.0测试与发布报告及大厅doc/evidence/n23/sequence24。
