@@ -16,6 +16,11 @@
       if(supports(level)&&!solid(this.at(add(p,{x:0,y:1,z:0})))){const up=this.at(add(q,{x:0,y:1,z:0}));if(up?.kind==='dust')result.push(up);}
       if(!solid(level)&&solid(this.at(add(p,{x:0,y:-1,z:0})))){const down=this.at(add(q,{x:0,y:-1,z:0}));if(down?.kind==='dust')result.push(down);}
     }return result;}
+    dustDirections(p,neighbors=this.dustNeighbors(p)){
+      const connected=new Set(neighbors.map(q=>directions.findIndex(d=>q.x-p.x===d.x&&q.z-p.z===d.z)));
+      for(let i=0;i<4;i++){const q=this.at(add(p,directions[i]));if(q&&['repeater','lever','torch'].includes(q.kind))connected.add(i);}
+      if(connected.size===1)connected.add(([...connected][0]+2)%4);if(!connected.size)for(let i=0;i<4;i++)connected.add(i);return connected;
+    }
     validate(){const errors=[];for(const b of this.cells.values()){
       if(['dust','repeater','lever'].includes(b.kind)&&!supports(this.at(add(b,{x:0,y:-1,z:0}))))errors.push('缺少支撑：'+key(b));
       if(b.kind==='torch'){const p=b.attached||add(b,{x:0,y:-1,z:0});if(!solid(this.at(p))||Math.abs(p.x-b.x)+Math.abs(p.y-b.y)+Math.abs(p.z-b.z)!==1||p.y>b.y)errors.push('火把缺少合法附着方块：'+key(b));}
@@ -34,9 +39,7 @@
       for(const b of this.dust){let v=direct.get(key(b))||0;for(const d of around)v=Math.max(v,strong.get(key(add(b,d)))||0);seed(b,v);}
       for(let i=0;i<queue.length;i++){const b=queue[i],v=levels.get(b)-1;if(v>0)for(const q of this.links.get(b))seed(q,v);}
       for(const b of this.dust){const value=levels.get(b)||0;if(b.power!==value){b.power=value;this.changes.add(b);}if(!value)continue;const below=add(b,{x:0,y:-1,z:0});if(solid(world.at(below)))set(weak,key(below),value);
-        const connected=new Set((this.links.get(b)||[]).map(q=>directions.findIndex(d=>q.x-b.x===d.x&&q.z-b.z===d.z)));
-        for(let i=0;i<4;i++){const q=world.at(add(b,directions[i]));if(q&&['repeater','lever','torch'].includes(q.kind))connected.add(i);}
-        if(connected.size===1)connected.add(([...connected][0]+2)%4);
+        const connected=world.dustDirections(b,this.links.get(b)||[]);
         for(let i=0;i<4;i++)if(!connected.size||connected.has(i)){const p=add(b,directions[i]);if(solid(world.at(p)))set(weak,key(p),value);}
       }
       const blockPower=p=>Math.max(strong.get(key(p))||0,weak.get(key(p))||0);
