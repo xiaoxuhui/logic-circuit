@@ -95,16 +95,22 @@
     };
     // A clear straight connector needs no lead-and-return detour, even between close ports.
     if(!segments.some(s=>overlap(a,b,s.a,s.b))&&!state.nodes.some(n=>segmentHitsBox(a,b,{...n,...size(n,state.definitions)}))&&!boxes.some(r=>r.id!==aEnd.node&&r.id!==bEnd.node&&segmentHitsBox(a,b,r)))return [{x:a.x,y:a.y},{x:b.x,y:b.y}];
-    if(directOnly)return null;
+    if(directOnly===true)return null;
     if(distance(a,b)<=2*ROUTE_CLEARANCE){
       const outward=(end,p,q)=>{if(!end.node)return true;const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;return (q.x-p.x)*dx+(q.y-p.y)*dy>0&&Math.abs((q.x-p.x)*dy-(q.y-p.y)*dx)<1e-7;};
       const candidates=[[a,{x:b.x,y:a.y},b],[a,{x:a.x,y:b.y},b],[a,{x:(a.x+b.x)/2,y:a.y},{x:(a.x+b.x)/2,y:b.y},b],[a,{x:a.x,y:(a.y+b.y)/2},{x:b.x,y:(a.y+b.y)/2},b]];
       for(const ps of candidates.sort((p,q)=>p.length-q.length)){if(!outward(aEnd,a,ps[1])||!outward(bEnd,b,ps.at(-2)))continue;if(ps.slice(1).every((q,i)=>!segments.some(s=>overlap(ps[i],q,s.a,s.b))&&!state.nodes.some(n=>segmentHitsBox(ps[i],q,{...n,...size(n,state.definitions)}))&&!boxes.some(r=>r.id!==aEnd.node&&r.id!==bEnd.node&&segmentHitsBox(ps[i],q,r))))return ps.map(p=>({x:p.x,y:p.y}));}
     }
-    const starts=leads(aEnd,a),ends=leads(bEnd,b);if(!starts.length||!ends.length)return leastOverlapRoute(aEnd,bEnd,state,ignoreWire);
+    const starts=leads(aEnd,a),ends=leads(bEnd,b);if(!starts.length||!ends.length)return directOnly==='short'?null:leastOverlapRoute(aEnd,bEnd,state,ignoreWire);
     const A=starts[0].at(-1),B=ends[0].at(-1);
     const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if((u.x===v.x&&v.x===p.x&&(v.y-u.y)*(p.y-v.y)>=0)||(u.y===v.y&&v.y===p.y&&(v.x-u.x)*(p.x-v.x)>=0))out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
     const complete=(start,ps,end)=>{const result=clean([...start,...ps,...end.slice().reverse()]);for(let i=1;i<result.length;i++){if(segments.some(s=>overlap(result[i-1],result[i],s.a,s.b)))return null;for(let j=1;j<i;j++)if(overlap(result[i-1],result[i],result[j-1],result[j]))return null;}return result;};
+    // A blocked port approach only needs a short exit, not an orthogonal detour
+    // for the whole connection. Keep the same body, port and overlap checks.
+    let shortRoute=null,shortLength=Infinity;
+    for(const start of [[a],...starts])for(const end of [[b],...ends]){const p=start.at(-1),q=end.at(-1);if(p.x===q.x||p.y===q.y)continue;if(segments.some(s=>overlap(p,q,s.a,s.b))||state.nodes.some(n=>segmentHitsBox(p,q,{...n,...size(n,state.definitions)}))||boxes.some(r=>(r.port||r.id!==aEnd.node&&r.id!==bEnd.node)&&segmentHitsBox(p,q,r)))continue;const result=complete(start,[p,q],end);if(!result)continue;const length=result.slice(1).reduce((sum,q,i)=>sum+distance(result[i],q),0);if(length<shortLength){shortRoute=result;shortLength=length;}}
+    if(shortRoute)return shortRoute;
+    if(directOnly==='short')return null;
     const ys=[...new Set([...boxes.flatMap(r=>[r.y,r.y+r.h]),...segments.flatMap(s=>[s.a.y-12,s.a.y+12,s.b.y-12,s.b.y+12])])].sort((x,y)=>Math.abs(x-(A.y+B.y)/2)-Math.abs(y-(A.y+B.y)/2));
     const xs=[...new Set([...boxes.flatMap(r=>[r.x,r.x+r.w]),...segments.flatMap(s=>[s.a.x-12,s.a.x+12,s.b.x-12,s.b.x+12])])].sort((x,y)=>Math.abs(x-(A.x+B.x)/2)-Math.abs(y-(A.x+B.x)/2));
     for(const start of starts)for(const end of ends){const a=start.at(-1),b=end.at(-1),candidates=[[a,{x:b.x,y:a.y},b],[a,{x:a.x,y:b.y},b],[a,{x:(a.x+b.x)/2,y:a.y},{x:(a.x+b.x)/2,y:b.y},b]];
