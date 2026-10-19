@@ -384,6 +384,16 @@
     const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>e.node===nodeId)){const ps=route(w.a,w.b,active,w.id);if(ps)w.via=ps.slice(1,-1);}
     return ownerId?updateDefinition(next,ownerId,local):validate(next);
   }
+  function resizeComponentBits(root,ownerId,nodeId,bits){
+    const next=clone(root),local=ownerId?next.definitions[ownerId]:next,node=local?.nodes.find(n=>n.id===nodeId);
+    if(!node||!['input','output','delay','hub','splitter'].includes(node.type))throw Error('此元件没有可调整的带宽');
+    const min=['hub','splitter'].includes(node.type)?2:1;if(!Number.isInteger(bits)||bits<min||bits>MAX_BITS)throw Error('带宽请输入 '+min+'–'+MAX_BITS+' 的整数');
+    node.bits=bits;if(node.type==='input')node.value=packBits(bitArray(node.value||0,bits));
+    const available=ports(node,next.definitions);local.wires=local.wires.filter(w=>[w.a,w.b].every(e=>e.node!==nodeId||available.some(p=>p.dir===e.dir&&p.port===e.port)));
+    if(node.type==='delay')for(const [path,value] of Object.entries(next.delayState||{})){let circuit=root,owner=null;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){if(i===parts.length-1&&owner===ownerId&&parts[i]===nodeId){next.delayState[path]=packBits(bitArray(value,bits));break;}const n=circuit.nodes.find(n=>n.id===parts[i]);if(n?.type!=='custom')break;owner=n.def;circuit=root.definitions[owner];}}
+    const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>e.node===nodeId)){const ps=route(w.a,w.b,active,w.id);if(ps)w.via=ps.slice(1,-1);}
+    return ownerId?updateDefinition(next,ownerId,local):validate(next);
+  }
   function pruneDefinitions(state){
     const defs=state.definitions,keep=new Set();
     function visit(id){if(keep.has(id))return;if(!Object.hasOwn(defs,id))throw Error('自定义门不存在');keep.add(id);for(const n of defs[id].nodes)if(n.type==='custom')visit(n.def);}
@@ -421,5 +431,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
