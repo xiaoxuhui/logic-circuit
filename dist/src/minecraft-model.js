@@ -38,7 +38,31 @@
       }
     }
     visit(state,'root');for(const p of primitives){p.inputs=p.inputs.map(find);if(p.output)p.output=find(p.output);}for(const p of forced)p.token=find(p.token);
-    return {state,records,primitives,forced};
+    return simplify({state,records,primitives,forced});
+  }
+  // Simplify only the conversion copy. Registers and combinational feedback stay physical.
+  function simplify(graph){
+    const all=graph.primitives,nands=all.filter(p=>p.node.type==='nand'),active=new Set(nands),drivers=new Map(),originalUses=new Map(),aliases=new Map(),forced=new Set(graph.forced.map(p=>p.token));
+    for(const p of all){if(p.output){if(!drivers.has(p.output))drivers.set(p.output,[]);drivers.get(p.output).push(p);}for(const token of p.inputs)originalUses.set(token,(originalUses.get(token)||0)+1);}
+    const resolve=token=>{let root=token;while(aliases.has(root))root=aliases.get(root);while(aliases.has(token)){const next=aliases.get(token);aliases.set(token,root);token=next;}return root;};
+    const pending=new Map(),dependents=new Map(),ready=[],expressions=new Map(),inverses=new Map(),merged=new Map();
+    for(const p of nands){const deps=new Set(p.inputs.flatMap(token=>forced.has(token)?[]:(drivers.get(token)||[]).filter(d=>d.node.type==='nand')));pending.set(p,deps.size);if(!deps.size)ready.push(p);for(const dep of deps){if(!dependents.has(dep))dependents.set(dep,[]);dependents.get(dep).push(p);}}
+    for(let i=0;i<ready.length;i++){const p=ready[i],inputs=p.inputs.map(resolve),signature=JSON.stringify(inputs.slice().sort());p.inputs=inputs;
+      if(!forced.has(p.output)){
+        if(drivers.get(p.output).length===1){let replacement;if(inputs[0]===inputs[1]&&inverses.has(inputs[0]))replacement=resolve(inverses.get(inputs[0]));else if(expressions.has(signature))replacement=resolve(expressions.get(signature));
+          if(replacement!==undefined&&replacement!==p.output){aliases.set(p.output,replacement);active.delete(p);}else{expressions.set(signature,p.output);if(inputs[0]===inputs[1])inverses.set(p.output,inputs[0]);}
+        }else{if(!merged.has(p.output))merged.set(p.output,new Set());const seen=merged.get(p.output);if(seen.has(signature))active.delete(p);else seen.add(signature);}
+      }
+      for(const next of dependents.get(p)||[]){pending.set(next,pending.get(next)-1);if(!pending.get(next))ready.push(next);}
+    }
+    const kept=all.filter(p=>p.node.type!=='nand'||active.has(p)),uses=new Map(),liveDrivers=new Map();
+    for(const p of kept){p.inputs=p.inputs.map(resolve);if(p.output)p.output=resolve(p.output);for(const token of p.inputs)uses.set(token,(uses.get(token)||0)+1);if(p.node.type==='nand'){if(!liveDrivers.has(p.output))liveDrivers.set(p.output,[]);liveDrivers.get(p.output).push(p);}}
+    // Reclaim only gates orphaned by a rewrite, retaining originally unconnected components.
+    const removable=p=>active.has(p)&&!forced.has(p.output)&&!uses.get(p.output)&&originalUses.get(p.output)>0,unused=[...active].filter(removable);
+    for(let i=0;i<unused.length;i++){const p=unused[i];if(!removable(p))continue;active.delete(p);for(const token of p.inputs){uses.set(token,(uses.get(token)||0)-1);for(const parent of liveDrivers.get(token)||[])if(removable(parent))unused.push(parent);}}
+    graph.primitives=kept.filter(p=>p.node.type!=='nand'||active.has(p));for(const p of graph.forced)p.token=resolve(p.token);
+    const remaining=new Set(graph.primitives.map(p=>p.record));for(const record of graph.records)if(record.type==='nand'&&!remaining.has(record))record.optimized=true;
+    graph.optimization={sourceNands:nands.length,renderedNands:active.size,removedNands:nands.length-active.size};return graph;
   }
   function build(source,progress=()=>{}){
     progress(5,'正在逐位展开端口连接…');const graph=compile(source),world=new R.World(),terminals=new Map(),warnings=[],unrouted=[],reserved=new Map(),levers=[],lamps=[];
@@ -48,8 +72,8 @@
     function dust(x,y,z,net,on=false){support(x,y-1,z);const old=world.at({x,y,z});if(old){if(old.kind!=='dust'||old.net!==net)throw Error('线路重叠：'+R.key(old));return old;}return put('dust',x,y,z,{net,power:on?15:0});}
     function device(kind,x,y,z,net,on,extra={}){if(kind!=='torch')support(x,y-1,z);return put(kind,x,y,z,{net,on,...extra});}
     function terminal(net,p,source=false){if(source&&forced.has(net))return;const group=terminals.get(net)||{sources:[],targets:[]};if(!terminals.has(net))terminals.set(net,group);group[source?'sources':'targets'].push(p);}
-    const internalRecords=graph.records.filter(record=>!['input','output'].includes(record.type)),recordSlots=new Map(internalRecords.map((record,i)=>[record,i])),maxBits=graph.records.reduce((max,record)=>Math.max(max,record.bits),1),bandHeight=Math.max(10,maxBits*3+6);
-    function reserve(x,z,complex,reversed=false){let minX=complex==='delay'?0:-1,maxX=complex==='nand'?6:complex==='delay'?1:11;if(reversed)[minX,maxX]=[10-maxX,10-minX];const rect={minX:x+minX,maxX:x+maxX,minZ:z+(complex&&complex!=='delay'?-1:3),maxZ:z+(complex&&complex!=='delay'?9:5)};maxReservedZ=Math.max(maxReservedZ,rect.maxZ);for(let bx=Math.floor(rect.minX/16);bx<=Math.floor(rect.maxX/16);bx++)for(let bz=Math.floor(rect.minZ/16);bz<=Math.floor(rect.maxZ/16);bz++){const k=bx+','+bz;if(!reserved.has(k))reserved.set(k,[]);reserved.get(k).push(rect);}}
+    const internalRecords=graph.records.filter(record=>!record.optimized&&!['input','output'].includes(record.type)),recordSlots=new Map(internalRecords.map((record,i)=>[record,i])),maxBits=graph.records.reduce((max,record)=>Math.max(max,record.bits),1),bandHeight=Math.max(7,maxBits*3+4);
+    function reserve(x,z,complex,reversed=false){let minX=complex==='delay'?0:-1,maxX=complex==='nand'?6:complex==='delay'?1:11;if(reversed)[minX,maxX]=[10-maxX,10-minX];const rect={minX:x+minX,maxX:x+maxX,minZ:z+(complex==='nand'?2:complex&&complex!=='delay'?-1:3),maxZ:z+(complex==='nand'?6:complex&&complex!=='delay'?9:5)};maxReservedZ=Math.max(maxReservedZ,rect.maxZ);for(let bx=Math.floor(rect.minX/16);bx<=Math.floor(rect.maxX/16);bx++)for(let bz=Math.floor(rect.minZ/16);bz<=Math.floor(rect.maxZ/16);bz++){const k=bx+','+bz;if(!reserved.has(k))reserved.set(k,[]);reserved.get(k).push(rect);}}
     function tile(p){if(!recordSlots.has(p.record))recordSlots.set(p.record,graph.records.length+serial++);const i=recordSlots.get(p.record),band=Math.floor(i/64),col=band%2?63-i%64:i%64,x=4+col*11,z=4+band*bandHeight+(maxBits-1-p.bit)*3;reserve(x,z,p.node.type==='nand'?'nand':'delay',!!(band%2));return {x,z,reversed:!!(band%2)};}
     const lastIndex=internalRecords.length-1,lastBand=lastIndex<0?0:Math.floor(lastIndex/64),lastCol=lastBand%2?63-lastIndex%64:lastIndex%64,lastX=internalRecords.length?4+lastCol*11:0,engineWidth=internalRecords.length?lastX+(internalRecords.at(-1).type==='nand'?8:2):0,boundaryPlans=new Map(),interfaceRotations=new Set(graph.records.filter(record=>['input','output'].includes(record.type)).map(record=>record.source.rotation)),interfaceFacing=interfaceRotations.size===1?[...interfaceRotations][0]/90:0,engineDepth=internalRecords.length?12+lastBand*bandHeight+(maxBits-1)*3:0;
     for(const type of ['input','output']){const records=graph.records.filter(record=>record.type===type&&record.scope==='root'),ordered=records.slice().sort((a,b)=>a.source.y-b.source.y||a.source.x-b.source.x||a.id.localeCompare(b.id));if(!records.length)continue;let scale=1/8,plans,boxes;
@@ -72,7 +96,7 @@
       if(type==='delay'){
         line(-2,0,4,p.inputs[0],false);world.at({x:X(-2),y:1,z:z+4}).tail=2;terminal(p.inputs[0],world.at({x:X(-2),y:1,z:z+4}));repeat(1,4,net,p.on,Math.min(4,Math.max(1,p.node.redstoneDelay||1))).role='delay';line(2,2,4,net,p.on);const out=world.at({x:X(2),y:1,z:z+4});out.capacity=15;terminal(net,out,true);netSignal.set(net,p.on);
       }else if(type==='nand'){
-        const outLocal=net;for(let i=0;i<2;i++){const Z=i?7:1,N=p.inputs[i];entry(N,Z);dust(X(2),1,z+Z,N,!!p.inputBits[i]);put('support',X(3),1,z+Z);device('torch',X(4),1,z+Z,outLocal,!p.inputBits[i],{attached:{x:X(3),y:1,z:z+Z}});line(5,6,Z,outLocal,!p.inputBits[i]);}for(let Z=2;Z<7;Z++)dust(X(6),1,z+Z,outLocal,p.on);line(7,7,4,outLocal,p.on);line(8,8,4,net,p.on);const out=world.at({x:X(8),y:1,z:z+4});out.capacity=9;terminal(net,out,true);netSignal.set(net,p.on);
+        const outLocal=net,tied=p.inputs[0]===p.inputs[1];for(let i=0;i<(tied?1:2);i++){const Z=tied?4:i?5:3,N=p.inputs[i];entry(N,Z);dust(X(2),1,z+Z,N,!!p.inputBits[i]);put('support',X(3),1,z+Z);device('torch',X(4),1,z+Z,outLocal,!p.inputBits[i],{attached:{x:X(3),y:1,z:z+Z}});line(5,6,Z,outLocal,!p.inputBits[i]);}dust(X(6),1,z+4,outLocal,p.on);line(7,8,4,net,p.on);const out=world.at({x:X(8),y:1,z:z+4});out.capacity=tied?12:11;terminal(net,out,true);netSignal.set(net,p.on);
       }
       if(record.x===undefined){record.x=X(5);record.y=2;record.z=z+4;}record.last={x:X(5),y:2,z:z+4};
     }
@@ -125,7 +149,7 @@
       else if(b.kind==='lamp')render(b,'lamp',x,y+.5,z);
     }
     if(!instanceCount){bounds.min={x:-1,y:0,z:-1};bounds.max={x:1,y:1,z:1};}for(const item of [...levers,...lamps]){item.renders=world.cells.get(item.key).renders;item.on=!!world.cells.get(item.key).on;}const focus=levers.slice().sort((a,b)=>(a.source?.y??Infinity)-(b.source?.y??Infinity)||(a.source?.x??Infinity)-(b.source?.x??Infinity)||b.bit-a.bit)[0]||graph.records[0]||{x:0,y:1,z:0};
-    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:new Float32Array(b.values)})),instanceCount,components:graph.records,bounds,focus,library:'内置红石方块',snapshot:true,physical:true,levers,lamps,warnings,unrouted,world,simulation:sim};
+    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:new Float32Array(b.values)})),instanceCount,components:graph.records,bounds,focus,library:'内置红石方块',snapshot:true,physical:true,optimization:graph.optimization,levers,lamps,warnings,unrouted,world,simulation:sim};
   }
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
