@@ -361,13 +361,15 @@
   }
   function gateReplacementInfo(root,ownerId,nodeId,replacement){
     const local=ownerId?root.definitions[ownerId]:root,node=local?.nodes.find(n=>n.id===nodeId);
-    if(!node||!['nand','custom'].includes(node.type)||!['nand','custom'].includes(replacement?.type))throw Error('只能替换逻辑门');
+    if(!node||!types.includes(replacement?.type))throw Error('替换元件无效');
+    const variableWidth=['input','output','delay','hub','splitter'].includes(replacement.type),bits=replacement.bits??width(node);
+    if(variableWidth&&(!Number.isInteger(bits)||bits<(['hub','splitter'].includes(replacement.type)?2:1)||bits>MAX_BITS))throw Error('替换元件位宽无效');
     if(replacement.type==='custom'){
       if(!root.definitions[replacement.def])throw Error('自定义门不存在');
       const seen=new Set(),contains=id=>{if(id===ownerId)return true;if(seen.has(id))return false;seen.add(id);return root.definitions[id].nodes.some(n=>n.type==='custom'&&contains(n.def));};
       if(ownerId&&contains(replacement.def))throw Error('替换会造成自定义门循环依赖');
     }
-    const nextNode={id:node.id,x:node.x,y:node.y,...(node.rotation!==undefined?{rotation:node.rotation}:{}),...(node.label!==undefined?{label:node.label}:{}),type:replacement.type,...(replacement.type==='custom'?{def:replacement.def}:{})},oldSpec=spec(node,root.definitions),nextSpec=spec(nextNode,root.definitions);
+    const nextNode={id:node.id,x:node.x,y:node.y,...(node.rotation!==undefined?{rotation:node.rotation}:{}),...(node.label!==undefined?{label:node.label}:{}),type:replacement.type,...(replacement.type==='custom'?{def:replacement.def}:{}),...(variableWidth?{bits}:{}),...(replacement.type==='input'?{value:0}:{})},oldSpec=spec(node,root.definitions),nextSpec=spec(nextNode,root.definitions);
     const removed=local.wires.filter(w=>[w.a,w.b].some(e=>{if(e.node!==nodeId)return false;const dir=e.dir==='in'?'inputs':'outputs';return nextSpec[dir][e.port]===undefined||oldSpec[dir][e.port]!==nextSpec[dir][e.port];})).map(w=>w.id);
     return {node:nextNode,removedWires:removed,inputs:nextSpec.inputs,outputs:nextSpec.outputs};
   }
