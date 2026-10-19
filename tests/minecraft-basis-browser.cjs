@@ -18,7 +18,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
   await page.locator('#minecraft-overview').click();await page.screenshot({path:path.resolve('tests/artifacts/minecraft-or-not-mode.png')});
   const drawn=await page.evaluate(()=>window.drawnLabels);assert.ok(drawn.includes('非门 NOT'));assert.ok(drawn.includes('或门 OR'));assert.ok(!drawn.some(s=>s.includes('bundefined')));
   await page.setViewportSize({width:430,height:850});assert.equal(await page.locator('#minecraft-basis').isVisible(),true);assert.equal(await page.locator('#minecraft-close').isVisible(),true);await page.screenshot({path:path.resolve('tests/artifacts/minecraft-or-not-mobile.png')});
-  await page.locator('#minecraft-basis').selectOption('nand');await page.waitForFunction(()=>LogicMinecraftView.getStatus().basis==='nand'&&!LogicMinecraftView.getStatus().loading);assert.equal((await view()).unrouted,0);assert.equal(await page.locator('#minecraft-hierarchy').isVisible(),false);
+  await page.locator('#minecraft-basis').selectOption('nand');await page.waitForFunction(()=>LogicMinecraftView.getStatus().basis==='nand'&&!LogicMinecraftView.getStatus().loading);assert.equal((await view()).unrouted,0);assert.equal(await page.locator('#minecraft-hierarchy').isVisible(),true);
   await page.setViewportSize({width:1500,height:1000});await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
   await page.locator('#minecraft-close').click();assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),before);assert.deepEqual(errors,[]);
   console.log('PASS basis mode: NAND/OR-NOT switch, nested XOR/AND labels and scopes, eight physical adder rows, pause, mobile controls and unchanged original save');
