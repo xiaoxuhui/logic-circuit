@@ -1,6 +1,7 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicRedstone=api;})(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
   // Coordinates name occupied block cells; rendering dimensions never define connectivity.
+  const GAME_TICK_MS=50,REDSTONE_TICK_GAME_TICKS=2;
   const key=p=>p.x+','+p.y+','+p.z;
   const directions=[{x:1,y:0,z:0},{x:0,y:0,z:1},{x:-1,y:0,z:0},{x:0,y:0,z:-1}];
   const around=[...directions,{x:0,y:1,z:0},{x:0,y:-1,z:0}];
@@ -44,10 +45,10 @@
       }
       const blockPower=p=>Math.max(strong.get(key(p))||0,weak.get(key(p))||0);
       const backPower=(b,d)=>{const p=add(b,d),q=world.at(p);if(!q)return 0;if(q.kind==='dust')return q.power||0;if(solid(q))return blockPower(p);if(q.kind==='lever'||q.kind==='torch')return q.on?15:0;if(q.kind==='repeater'&&q.on&&key(add(q,directions[q.facing||0]))===key(b))return 15;return 0;};
-      for(const b of this.devices){let wanted=false,delay=1;
+      for(const b of this.devices){let wanted=false,delay=REDSTONE_TICK_GAME_TICKS;
         if(b.kind==='torch')wanted=!blockPower(b.attached||add(b,{x:0,y:-1,z:0}));
-        else if(b.kind==='repeater'){const facing=b.facing||0,locked=[(facing+1)%4,(facing+3)%4].some(i=>{const q=world.at(add(b,directions[i]));return q?.kind==='repeater'&&q.on&&key(add(q,directions[q.facing||0]))===key(b);});if(locked){this.pending.delete(b);continue;}wanted=!!backPower(b,directions[(facing+2)%4]);delay=b.delay;}
-        else {wanted=!!(direct.get(key(b))||blockPower(b)||around.some(d=>blockPower(add(b,d))));delay=wanted?0:2;}
+        else if(b.kind==='repeater'){const facing=b.facing||0,locked=[(facing+1)%4,(facing+3)%4].some(i=>{const q=world.at(add(b,directions[i]));return q?.kind==='repeater'&&q.on&&key(add(q,directions[q.facing||0]))===key(b);});if(locked){this.pending.delete(b);continue;}wanted=!!backPower(b,directions[(facing+2)%4]);delay=b.delay*REDSTONE_TICK_GAME_TICKS;}
+        else {wanted=!!(direct.get(key(b))||blockPower(b)||around.some(d=>blockPower(add(b,d))));delay=wanted?0:2*REDSTONE_TICK_GAME_TICKS;}
         if(wanted===!!b.on){this.pending.delete(b);continue;}if(!delay){b.on=wanted;this.changes.add(b);continue;}const old=this.pending.get(b);if(!old||old.on!==wanted)this.pending.set(b,{at:this.tick+delay,on:wanted});
       }
       this.power=levels;
@@ -56,5 +57,5 @@
     toggle(p){const b=typeof p==='string'?this.world.cells.get(p):this.world.at(p);if(b?.kind!=='lever')return false;b.on=!b.on;this.changes.add(b);this.refresh();return true;}
     drain(){const changes=[...this.changes];this.changes.clear();return changes;}
   }
-  return {World,Simulator,key,directions,add,solid,supports};
+  return {World,Simulator,key,directions,add,solid,supports,GAME_TICK_MS,REDSTONE_TICK_GAME_TICKS};
 });

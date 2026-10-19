@@ -8,7 +8,7 @@
     root.onmessage=e=>{try{const data=e.data;if(data.type==='toggle'){if(sim?.toggle(data.key))send();return;}if(data.type==='step'){sim?.step().forEach(b=>sim.changes.add(b));send(true);return;}if(data.type==='running'){running=data.value;return;}
       current=api.build(data.state,(progress,message)=>root.postMessage({progress,message}));sim=current.simulation;sim.drain();const {world,simulation,...model}=current;root.postMessage({model},model.batches.map(b=>b.data.buffer));
     }catch(error){root.postMessage({error:error.message||'转换失败'});}};
-    setInterval(()=>{if(sim&&running&&sim.pending.size){sim.step().forEach(b=>sim.changes.add(b));send();}},100);
+    setInterval(()=>{if(sim&&running&&sim.pending.size){sim.step().forEach(b=>sim.changes.add(b));send();}},api.GAME_TICK_MS);
   }
 })(typeof globalThis!=='undefined'?globalThis:this,function(C,E,R){
   'use strict';
@@ -141,7 +141,7 @@
         let chosen=-1;for(let i=Math.min(last-1,cursor+strength);i>cursor;i--){const p=ps[i],a=ps[i-1],c=ps[i+1],b=world.at(p),dx=c.x-a.x,dz=c.z-a.z;if(b?.kind==='dust'&&p.y===a.y&&p.y===c.y&&Math.abs(dx)+Math.abs(dz)===2&&!(dx&&dz)&&world.dustNeighbors(p).length===2){chosen=i;break;}}
         if(chosen<0){warnings.push('一条长线缺少可用的中继直段');break;}const b=world.at(ps[chosen]),a=ps[chosen-1],c=ps[chosen+1];b.kind='repeater';b.role='buffer';b.facing=R.directions.findIndex(d=>d.x===Math.sign(c.x-a.x)&&d.z===Math.sign(c.z-a.z));b.delay=1;b.on=!!netSignal.get(path.net);cursor=chosen;strength=16;
       }}
-    const errors=world.validate();if(errors.length)throw Error(errors[0]);if(unrouted.length)warnings.push(unrouted.length+' 条连接未能安全布通，已留空，未使用穿透线路');if(graph.primitives.some(p=>p.node.type==='delay'))warnings.push('原延迟线逐位转换为 1–4 刻中继器，物理计时与原“下一步”寄存器不同');
+    const errors=world.validate();if(errors.length)throw Error(errors[0]);if(unrouted.length)warnings.push(unrouted.length+' 条连接未能安全布通，已留空，未使用穿透线路');if(graph.primitives.some(p=>p.node.type==='delay'))warnings.push('原延迟线逐位转换为 1–4 红石刻（2–8 游戏刻）中继器，物理计时与原“下一步”寄存器不同');
     progress(80,'正在验证红石连接并生成方块实例…');const sim=new R.Simulator(world);sim.drain();const batches=new Map(),bounds={min:{x:Infinity,y:Infinity,z:Infinity},max:{x:-Infinity,y:-Infinity,z:-Infinity}};let instanceCount=0;
     function render(b,kind,x,y,z,w=1,h=1,d=1,yaw=0,tilt=0){const k=kind+':'+Math.floor(x/192)+':'+Math.floor(z/192),batch=batches.get(k)||{kind,key:k,values:[]};if(!batches.has(k))batches.set(k,batch);const index=batch.values.length/STRIDE,color=tint(b,kind);batch.values.push(x,y,z,w,h,d,yaw,...color,tilt);(b.renders||(b.renders=[])).push({key:k,index,kind});instanceCount++;for(const axis of ['x','y','z']){const v={x,y,z}[axis],extent={x:w,y:h,z:d}[axis]/2;bounds.min[axis]=Math.min(bounds.min[axis],v-extent);bounds.max[axis]=Math.max(bounds.max[axis],v+extent);}}
     for(const b of world.cells.values()){const x=b.x+.5,y=b.y,z=b.z+.5;
@@ -158,5 +158,5 @@
   }
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,advanceCamera,look,compile,build,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,advanceCamera,look,compile,build,tint,updates};
 });
