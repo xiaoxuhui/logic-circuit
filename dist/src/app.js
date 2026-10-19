@@ -309,7 +309,7 @@
   function rerouteWires(){for(const w of state.wires)if(w.autoRoute){const routed=C.route(w.a,w.b,state,w.id);if(routed)w.via=routed.slice(1,-1);}}
   function repairWirePaths(automaticOnly=false){
     const freeEnds=state.wires.flatMap(w=>[w.a,w.b]).filter(p=>!p.node),touchesFree=ps=>freeEnds.some(p=>ps.slice(1).some((q,i)=>C.distance(p,C.project(p,ps[i],q))<.05));let changed=false;
-    for(const w of state.wires){if(automaticOnly&&!w.autoRoute||!w.a.node||!w.b.node||(!C.wireOverlaps(w,state)&&!C.wireHitsGate(w,state))||touchesFree(C.points(w,state)))continue;const routed=C.route(w.a,w.b,state,w.id);if(!routed||touchesFree(routed))continue;const via=routed.slice(1,-1);if(JSON.stringify(w.via||[])!==JSON.stringify(via)||!w.autoRoute){w.via=via;w.autoRoute=true;changed=true;}}
+    for(const w of state.wires){if(automaticOnly&&!w.autoRoute||!w.a.node||!w.b.node||touchesFree(C.points(w,state)))continue;const direct=w.autoRoute&&w.via?.length?C.route(w.a,w.b,state,w.id,true):null;if(!direct&&!C.wireOverlaps(w,state)&&!C.wireHitsGate(w,state))continue;const routed=direct||C.route(w.a,w.b,state,w.id);if(!routed||touchesFree(routed))continue;const via=routed.slice(1,-1);if(JSON.stringify(w.via)!==JSON.stringify(via)||!w.autoRoute){w.via=via;w.autoRoute=true;changed=true;}}
     return changed;
   }
   function rotateSelected(){if(expanded||gesture||placement)return;const ids=selected?.type==='nodes'?selected.ids:selected?.type==='node'?[selected.id]:[];if(!ids.length)return;change(()=>{for(const n of state.nodes.filter(n=>ids.includes(n.id))){const before=C.size(n,state.definitions);n.rotation=((n.rotation||0)+90)%360;const after=C.size(n,state.definitions);n.x+=(before.w-after.w)/2;n.y+=(before.h-after.h)/2;}rerouteWires();});}
@@ -362,6 +362,7 @@
   function moveGroup(p){const g=gesture;g.moved=g.moved||C.distance(p,g.start)*camera.scale>5;if(!g.moved)return;const dx=Math.round((p.x-g.start.x)/12)*12,dy=Math.round((p.y-g.start.y)/12)*12,shift=p=>({...p,x:p.x+dx,y:p.y+dy}),end=p=>p.node?p:shift(p);for(const original of g.before.nodes)if(g.ids.has(original.id)){const n=state.nodes.find(n=>n.id===original.id);if(n){n.x=original.x+dx;n.y=original.y+dy;}}for(const original of g.before.wires)if(g.internalWires.has(original.id)){const w=state.wires.find(w=>w.id===original.id);if(w){w.a=end(original.a);w.b=end(original.b);if(original.via)w.via=original.via.map(shift);}}rerouteWires();sim=simulate(state);renderWires();renderNodes();}
   function endpoint(p){return p.node?{node:p.node,dir:p.dir,port:p.port}:{x:p.x,y:p.y};}
   function snap(p){
+    p={x:Math.abs(p.x-Math.round(p.x))<0.001?Math.round(p.x):p.x,y:Math.abs(p.y-Math.round(p.y))<0.001?Math.round(p.y):p.y};
     const threshold=14/camera.scale;let closest=null,dist=threshold;
     for(const n of state.nodes)for(const q of C.ports(n,state.definitions)){const d=C.distance(p,q);if(d<dist){closest=q;dist=d;}}
     if(closest)return {anchor:endpoint(closest),point:closest,snapped:true};

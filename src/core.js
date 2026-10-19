@@ -32,7 +32,7 @@
   function ports(n,defs){const s=spec(n,defs),z=baseSize(n,defs),out=[];for(const dir of ['in','out']){const ws=s[dir==='in'?'inputs':'outputs'],labels=s[dir==='in'?'inLabels':'outLabels'];ws.forEach((w,i)=>{const p=rotatedPoint({x:dir==='out'?z.w:0,y:z.h/2-(ws.length-1)*12+i*24},n,defs);out.push({node:n.id,dir,port:i,width:w,label:labels[i],x:n.x+p.x,y:n.y+p.y});});}return out;}
   const key=p=>p.node+':'+p.dir+':'+p.port;
   function anchor(e,state){if(!e.node)return {x:e.x,y:e.y};const n=state.nodes.find(n=>n.id===e.node);return ports(n,state.definitions).find(p=>p.dir===e.dir&&p.port===e.port);}
-  function points(w,state){const a=anchor(w.a,state),b=anchor(w.b,state);if(w.via?.length)return [a,...w.via,b];const x=(a.x+b.x)/2;return [a,{x,y:a.y},{x,y:b.y},b];}
+  function points(w,state){const a=anchor(w.a,state),b=anchor(w.b,state);if(Array.isArray(w.via))return [a,...w.via,b];const x=(a.x+b.x)/2;return [a,{x,y:a.y},{x,y:b.y},b];}
   function segmentsOverlap(p,q,c,d){const dx=q.x-p.x,dy=q.y-p.y,ex=d.x-c.x,ey=d.y-c.y;if((!dx&&!dy)||(!ex&&!ey)||Math.abs(dx*ey-dy*ex)>1e-7||Math.abs(dx*(c.y-p.y)-dy*(c.x-p.x))>1e-7)return false;const axis=Math.abs(dx)>=Math.abs(dy)?'x':'y';return Math.min(Math.max(p[axis],q[axis]),Math.max(c[axis],d[axis]))-Math.max(Math.min(p[axis],q[axis]),Math.min(c[axis],d[axis]))>1e-7;}
   function segmentHitsBox(p,q,r){let low=0,high=1;for(const [axis,extent] of [['x','w'],['y','h']]){const delta=q[axis]-p[axis],min=r[axis]+1e-7,max=r[axis]+r[extent]-1e-7;if(!delta){if(p[axis]<=min||p[axis]>=max)return false;}else{const a=(min-p[axis])/delta,b=(max-p[axis])/delta;low=Math.max(low,Math.min(a,b));high=Math.min(high,Math.max(a,b));if(low>=high)return false;}}return low<high;}
   function wireOverlaps(w,state){const ps=points(w,state);return state.wires.some(other=>other.id!==w.id&&points(other,state).slice(1).some((q,i,tail)=>{const p=i?tail[i-1]:anchor(other.a,state);return ps.slice(1).some((b,j)=>segmentsOverlap(ps[j],b,p,q));}));}
@@ -76,7 +76,7 @@
     }
     return bestPath;
   }
-  function route(aEnd,bEnd,state,ignoreWire=null){
+  function route(aEnd,bEnd,state,ignoreWire=null,directOnly=false){
     const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-ROUTE_CLEARANCE,y:n.y-ROUTE_CLEARANCE,w:size(n,state.definitions).w+2*ROUTE_CLEARANCE,h:size(n,state.definitions).h+2*ROUTE_CLEARANCE}));
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap(w=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b}));});
     const overlap=segmentsOverlap;
@@ -87,7 +87,8 @@
       for(let offset=1;offset<=256&&usable.length<4;offset++)for(const side of [-1,1]){const q={x:p.x+dx*ROUTE_CLEARANCE-dy*offset*side,y:p.y+dy*ROUTE_CLEARANCE+dx*offset*side};if(clear(p,q,end.node))usable.push([p,q]);}return usable;
     };
     // A clear straight connector needs no lead-and-return detour, even between close ports.
-    if((a.x===b.x||a.y===b.y)&&!segments.some(s=>overlap(a,b,s.a,s.b))&&!state.nodes.some(n=>segmentHitsBox(a,b,{...n,...size(n,state.definitions)}))&&!boxes.some(r=>r.id!==aEnd.node&&r.id!==bEnd.node&&segmentHitsBox(a,b,r)))return [{x:a.x,y:a.y},{x:b.x,y:b.y}];
+    if(!segments.some(s=>overlap(a,b,s.a,s.b))&&!state.nodes.some(n=>segmentHitsBox(a,b,{...n,...size(n,state.definitions)}))&&!boxes.some(r=>r.id!==aEnd.node&&r.id!==bEnd.node&&segmentHitsBox(a,b,r)))return [{x:a.x,y:a.y},{x:b.x,y:b.y}];
+    if(directOnly)return null;
     if(distance(a,b)<=2*ROUTE_CLEARANCE){
       const outward=(end,p,q)=>{if(!end.node)return true;const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;return (q.x-p.x)*dx+(q.y-p.y)*dy>0&&Math.abs((q.x-p.x)*dy-(q.y-p.y)*dx)<1e-7;};
       const candidates=[[a,{x:b.x,y:a.y},b],[a,{x:a.x,y:b.y},b],[a,{x:(a.x+b.x)/2,y:a.y},{x:(a.x+b.x)/2,y:b.y},b],[a,{x:a.x,y:(a.y+b.y)/2},{x:b.x,y:(a.y+b.y)/2},b]];
@@ -124,7 +125,7 @@
     const join=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent[a]=b;};
     const allPorts=state.nodes.flatMap(n=>ports(n,state.definitions)),portByKey=new Map(allPorts.map(p=>[key(p),p])),owners=new Map(),free=[];
     const ends=ws.map((w,i)=>[w.a,w.b].map(e=>{if(!e.node){free.push({i,p:e});return e;}const k=key(e);if(owners.has(k))join(i,owners.get(k));else owners.set(k,i);return portByKey.get(k);}));
-    const paths=ws.map((w,i)=>{const [a,b]=ends[i],x=(a.x+b.x)/2;return w.via?.length?[a,...w.via,b]:[a,{x,y:a.y},{x,y:b.y},b];});
+    const paths=ws.map((w,i)=>{const [a,b]=ends[i],x=(a.x+b.x)/2;return Array.isArray(w.via)?[a,...w.via,b]:[a,{x,y:a.y},{x,y:b.y},b];});
     // Only free endpoints can join the middle of another wire. Port-to-port
     // connections use the index above; mere path crossings stay separate.
     for(const {i,p} of free)for(let j=0;j<ws.length;j++)if(i!==j)for(let k=1;k<paths[j].length;k++)if(distance(p,project(p,paths[j][k-1],paths[j][k]))<0.05){join(i,j);break;}
@@ -291,7 +292,8 @@
     return {node,names};
   }
   function delayRegisters(state,scope='root',offset=0,limit=50){
-    if(!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<1||limit>200)throw Error('分页参数无效');
+    if(!Number.isInteger(offset)||offset<0||!Number.isInteger(limit)||limit<0||limit>1000000)throw Error('分页参数无效');
+    if(limit===0)limit=Infinity;
     const defs=state.definitions||{},memo=new Map(),visiting=new Set(),items=[];let skip=offset;
     function countNode(n){if(n.type==='delay')return 1;if(n.type!=='custom')return 0;if(memo.has(n.def))return memo.get(n.def);if(visiting.has(n.def))throw Error('自定义门循环依赖');const d=defs[n.def];if(!d)throw Error('自定义门不存在');visiting.add(n.def);const count=d.nodes.reduce((sum,n)=>sum+countNode(n),0);visiting.delete(n.def);memo.set(n.def,count);return count;}
     function visit(n,path,names){const count=countNode(n);if(!count||items.length>=limit)return;if(skip>=count){skip-=count;return;}if(n.type==='delay'){const bits=width(n);items.push({path,label:names.join(' / '),width:bits,value:packBits(bitArray(state.delayState?.[path]||0,bits))});}else for(const child of defs[n.def].nodes){visit(child,path+'/'+child.id,[...names,child.label||(child.type==='custom'?defs[child.def]?.name:child.type==='delay'?'延迟线':'元件')]);if(items.length>=limit)break;}}
