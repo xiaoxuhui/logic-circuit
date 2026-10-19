@@ -60,10 +60,20 @@
     // Reclaim only gates orphaned by a rewrite, retaining originally unconnected components.
     const removable=p=>active.has(p)&&!forced.has(p.output)&&!uses.get(p.output)&&originalUses.get(p.output)>0,unused=[...active].filter(removable);
     for(let i=0;i<unused.length;i++){const p=unused[i];if(!removable(p))continue;active.delete(p);for(const token of p.inputs){uses.set(token,(uses.get(token)||0)-1);for(const parent of liveDrivers.get(token)||[])if(removable(parent))unused.push(parent);}}
+    // A NAND input torch inverts again: bypass a preceding NOT on that branch.
+    const actualDrivers=new Map();for(const p of kept)if(p.output&&(p.node.type!=='nand'||active.has(p))){if(!actualDrivers.has(p.output))actualDrivers.set(p.output,[]);actualDrivers.get(p.output).push(p);}
+    const acyclic=new Set(ready);let cancelledPairs=0;
+    for(const p of ready)if(active.has(p)&&!forced.has(p.output)&&p.inputs[0]!==p.inputs[1])for(let i=0;i<2;i++){
+      const list=actualDrivers.get(p.inputs[i]),q=list?.length===1?list[0]:null;
+      if(!q||!acyclic.has(q)||!active.has(q)||q.inputs[0]!==q.inputs[1]||q.forwardInputs?.some(Boolean)||forced.has(q.output))continue;
+      (p.forwardInputs||(p.forwardInputs=[false,false]))[i]=true;p.inputs[i]=q.inputs[0];p.inputBits[i]=q.inputBits[0];cancelledPairs++;
+    }
+    uses.clear();for(const p of kept)if(p.node.type!=='nand'||active.has(p))for(const token of p.inputs)uses.set(token,(uses.get(token)||0)+1);
+    const orphaned=[...active].filter(removable);for(let i=0;i<orphaned.length;i++){const p=orphaned[i];if(!removable(p))continue;active.delete(p);for(const token of p.inputs){uses.set(token,(uses.get(token)||0)-1);for(const parent of liveDrivers.get(token)||[])if(removable(parent))orphaned.push(parent);}}
     graph.primitives=kept.filter(p=>p.node.type!=='nand'||active.has(p));for(const p of graph.forced)p.token=resolve(p.token);
     const remaining=new Set(graph.primitives.map(p=>p.record));for(const record of graph.records)if(record.type==='nand'&&!remaining.has(record))record.optimized=true;
     graph.layoutNands=ready.filter(p=>active.has(p)).map(p=>p.record);
-    graph.optimization={sourceNands:nands.length,renderedNands:active.size,removedNands:nands.length-active.size};return graph;
+    graph.optimization={sourceNands:nands.length,renderedNands:active.size,removedNands:nands.length-active.size,cancelledPairs};return graph;
   }
   function build(source,progress=()=>{}){
     progress(5,'正在逐位展开端口连接…');const graph=compile(source),world=new R.World(),terminals=new Map(),warnings=[],unrouted=[],reserved=new Map(),levers=[],lamps=[];
@@ -85,7 +95,7 @@
       let scale=compact?Math.min(1/8,2/span):1/8,lower=0,layout=arrange(scale);
       for(let attempt=0;layout.overlap;attempt++){if(attempt===48)throw Error('原图中的'+(type==='input'?'输入':'输出')+'位置重叠，请先分开后转换');lower=scale;scale*=2;layout=arrange(scale);}
       if(compact){for(let attempt=0;attempt<18;attempt++){const trial=(lower+scale)/2,next=arrange(trial);if(next.overlap)lower=trial;else{scale=trial;layout=next;}}}
-      const {plans,boxes}=layout,minX=Math.min(...boxes.map(b=>b.minX)),maxX=Math.max(...boxes.map(b=>b.maxX)),minZ=Math.min(...records.map(record=>Math.round(record.source.y*scale))),baseX=Math.min(...records.map(record=>Math.round(record.source.x*scale))),offsetX=interfaceFacing===1||interfaceFacing===3?4-baseX:interfaceFacing===2?(type==='input'?Math.max(4,engineWidth+2)-minX:1-maxX):type==='input'?1-maxX-(internalRecords.length?1:0):lastBand%2?lastX-2-maxX:Math.max(4,engineWidth+2)-minX,entryZ=type==='input'&&interfaceFacing===0&&internalRecords[0]?.type==='nand'?(firstGate.inputs[0]===firstGate.inputs[1]?8:7):8,offsetZ=interfaceFacing===1?(type==='input'?1-Math.max(...boxes.map(b=>b.maxZ)):Math.max(4,engineDepth+2)-Math.min(...boxes.map(b=>b.minZ))):interfaceFacing===3?(type==='input'?Math.max(4,engineDepth+2)-Math.min(...boxes.map(b=>b.minZ)):1-Math.max(...boxes.map(b=>b.maxZ))):entryZ-minZ+(type==='output'?lastBand*bandHeight:0);
+      const {plans,boxes}=layout,minX=Math.min(...boxes.map(b=>b.minX)),maxX=Math.max(...boxes.map(b=>b.maxX)),minZ=Math.min(...records.map(record=>Math.round(record.source.y*scale))),baseX=Math.min(...records.map(record=>Math.round(record.source.x*scale))),offsetX=interfaceFacing===1||interfaceFacing===3?4-baseX:interfaceFacing===2?(type==='input'?Math.max(4,engineWidth+2)-minX:1-maxX):type==='input'?1-maxX-(internalRecords.length?1:0):lastBand%2?lastX-2-maxX:Math.max(4,engineWidth+2)-minX,entryZ=type==='input'&&interfaceFacing===0&&internalRecords[0]?.type==='nand'?(firstGate.inputs[0]===firstGate.inputs[1]&&!!firstGate.forwardInputs?.[0]===!!firstGate.forwardInputs?.[1]?8:7):8,offsetZ=interfaceFacing===1?(type==='input'?1-Math.max(...boxes.map(b=>b.maxZ)):Math.max(4,engineDepth+2)-Math.min(...boxes.map(b=>b.minZ))):interfaceFacing===3?(type==='input'?Math.max(4,engineDepth+2)-Math.min(...boxes.map(b=>b.minZ)):1-Math.max(...boxes.map(b=>b.maxZ))):entryZ-minZ+(type==='output'?lastBand*bandHeight:0);
       for(const record of records)for(let bit=0;bit<record.bits;bit++){const p=plans.get(record.id+':'+bit);boundaryPlans.set(record.id+':'+bit,{...p,x:p.x+offsetX,z:p.z+offsetZ,scale});}
     }
     function makeBoundary(p,isForce=false){const {record,bit}=p,type=p.node.type,local=record.scope+'/'+record.id+'/'+bit,net=type==='input'?(forced.has(p.output)&&!isForce?local+'/isolated':p.output):p.inputs[0],layout=boundaryPlans.get(record.id+':'+bit)||{x:-4,z:maxReservedZ+4+(serial++)*3,dir:R.directions[0],label:record.label,scale:1/8},x=layout.x,z=layout.z,dir=layout.dir;
@@ -102,7 +112,7 @@
       if(type==='delay'){
         line(-2,0,4,p.inputs[0],false);world.at({x:X(-2),y:1,z:z+4}).tail=2;terminal(p.inputs[0],world.at({x:X(-2),y:1,z:z+4}));repeat(1,4,net,p.on,Math.min(4,Math.max(1,p.node.redstoneDelay||1))).role='delay';line(2,2,4,net,p.on);const out=world.at({x:X(2),y:1,z:z+4});out.capacity=15;terminal(net,out,true);netSignal.set(net,p.on);
       }else if(type==='nand'){
-        const outLocal=net,tied=p.inputs[0]===p.inputs[1];for(let i=0;i<(tied?1:2);i++){const Z=tied?4:i?5:3,N=p.inputs[i];entry(N,Z);dust(X(2),1,z+Z,N,!!p.inputBits[i]);put('support',X(3),1,z+Z);device('torch',X(4),1,z+Z,outLocal,!p.inputBits[i],{attached:{x:X(3),y:1,z:z+Z}});line(5,6,Z,outLocal,!p.inputBits[i]);}dust(X(6),1,z+4,outLocal,p.on);line(7,8,4,net,p.on);const out=world.at({x:X(8),y:1,z:z+4});out.capacity=tied?12:11;terminal(net,out,true);netSignal.set(net,p.on);
+        const outLocal=net,tied=p.inputs[0]===p.inputs[1]&&!!p.forwardInputs?.[0]===!!p.forwardInputs?.[1];for(let i=0;i<(tied?1:2);i++){const Z=tied?4:i?5:3,N=p.inputs[i];entry(N,Z);dust(X(2),1,z+Z,N,!!p.inputBits[i]);if(p.forwardInputs?.[i]){repeat(3,Z,N,!!p.inputBits[i]).role='isolation';line(4,6,Z,outLocal,!!p.inputBits[i]);}else{put('support',X(3),1,z+Z);device('torch',X(4),1,z+Z,outLocal,!p.inputBits[i],{attached:{x:X(3),y:1,z:z+Z}});line(5,6,Z,outLocal,!p.inputBits[i]);}}dust(X(6),1,z+4,outLocal,p.on);line(7,8,4,net,p.on);const out=world.at({x:X(8),y:1,z:z+4});out.capacity=tied?(p.forwardInputs?.[0]?11:12):p.forwardInputs?.some(Boolean)?10:11;terminal(net,out,true);netSignal.set(net,p.on);
       }
       if(record.x===undefined){record.x=X(5);record.y=2;record.z=z+4;}record.last={x:X(5),y:2,z:z+4};
     }
