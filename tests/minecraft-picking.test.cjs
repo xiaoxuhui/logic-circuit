@@ -1,0 +1,8 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),M=require('../src/minecraft-model.js');
+const lever=(x=0)=>({key:x+',1,0',x:x+.5,y:1.5,z:.5}),wall=(x,y=1,z=0,kind='support')=>({key:kind+':0:0',kind,data:new Float32Array([x+.5,y+.5,z+.5,1,1,1,0,1,1,1,0])});
+test('right-click selects the entire lever cell, including its empty upper corner',()=>{const l=lever();assert.equal(M.pickLever({x:-2,y:1.95,z:.95},{x:1,y:0,z:0},[l],[]),l);assert.equal(M.pickLever({x:-2,y:2.01,z:.95},{x:1,y:0,z:0},[l],[]),null);});
+test('walls in front block the cell but walls behind do not',()=>{const l=lever(3),origin={x:-2,y:1.5,z:.5},dir={x:1,y:0,z:0};for(const kind of ['support','lamp','slab'])assert.equal(M.pickLever(origin,dir,[l],[wall(1,1,0,kind)]),null);assert.equal(M.pickLever(origin,dir,[l],[wall(5)]),l);assert.equal(M.pickLever(origin,dir,[l],[wall(1,1,2)]),l);});
+test('nearest lever cell wins in either ray direction and behind-camera cells are ignored',()=>{const a=lever(),b=lever(3);assert.equal(M.pickLever({x:-2,y:1.5,z:.5},{x:1,y:0,z:0},[b,a],[]),a);assert.equal(M.pickLever({x:6,y:1.5,z:.5},{x:-1,y:0,z:0},[a,b],[]),b);assert.equal(M.pickLever({x:-2,y:1.5,z:.5},{x:-1,y:0,z:0},[a,b],[]),null);});
+test('grid edge contact counts while a zero-length ray does not',()=>{const l=lever();assert.equal(M.pickLever({x:-2,y:2,z:1},{x:1,y:0,z:0},[l],[]),l);assert.equal(M.pickLever({x:.5,y:1.5,z:.5},{x:0,y:0,z:0},[l],[]),null);});
+
+test('occlusion works across positive and negative spatial batches',()=>{for(const sign of [-1,1]){const l=lever(sign*210),b=wall(sign*200);b.key='support:'+Math.floor((sign*200+.5)/192)+':0';assert.equal(M.pickLever({x:0,y:1.5,z:.5},{x:sign,y:0,z:0},[l],[b]),null);}});

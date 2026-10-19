@@ -17,6 +17,17 @@
   const rgb=hex=>[(hex>>16&255)/255,(hex>>8&255)/255,(hex&255)/255];
   function advanceCamera(camera,keys,seconds,speed=12){const has=key=>keys.has?keys.has(key):keys.includes(key),forward=Number(has('KeyW'))-Number(has('KeyS')),right=Number(has('KeyD'))-Number(has('KeyA')),up=Number(has('Space'))-Number(has('ShiftLeft')||has('ShiftRight')),distance=Math.min(.05,Math.max(0,seconds))*speed/Math.max(1,Math.hypot(forward,right,up)),sin=Math.sin(camera.yaw),cos=Math.cos(camera.yaw);return {...camera,x:camera.x+(cos*right-sin*forward)*distance,y:camera.y+up*distance,z:camera.z+(-sin*right-cos*forward)*distance};}
   function look(camera,dx,dy){return {...camera,yaw:camera.yaw-dx*.0025,pitch:Math.max(-Math.PI/2+.02,Math.min(Math.PI/2-.02,camera.pitch-dy*.0025))};}
+  function rayBoxDistance(origin,direction,minX,minY,minZ,maxX,maxY,maxZ,limit=Infinity){
+    let near=0,far=limit;const lows=[minX,minY,minZ],highs=[maxX,maxY,maxZ];let i=0;
+    for(const axis of ['x','y','z']){const value=origin[axis],delta=direction[axis],low=lows[i],high=highs[i++];if(Math.abs(delta)<1e-12){if(value<low||value>high)return Infinity;continue;}let a=(low-value)/delta,b=(high-value)/delta;if(a>b)[a,b]=[b,a];near=Math.max(near,a);far=Math.min(far,b);if(far<near)return Infinity;}return near;
+  }
+  function pickLever(origin,direction,levers,batches=[]){
+    if(!['x','y','z'].every(k=>Number.isFinite(origin[k])&&Number.isFinite(direction[k]))||!Math.hypot(direction.x,direction.y,direction.z))return null;
+    let selected=null,distance=Infinity;for(const item of levers){const x=item.x-.5,y=item.y-.5,z=item.z-.5,hit=rayBoxDistance(origin,direction,x,y,z,x+1,y+1,z+1,distance);if(hit<distance){selected=item;distance=hit;}}if(!selected)return null;
+    const limit=distance+1e-8;for(const batch of batches){if(!['support','lamp','slab'].includes(batch.kind))continue;const bucket=/:(-?\d+):(-?\d+)/.exec(batch.key||'');if(bucket){const x=Number(bucket[1])*192,z=Number(bucket[2])*192;if(rayBoxDistance(origin,direction,x,-Infinity,z,x+192,Infinity,z+192,limit)===Infinity)continue;}
+      const a=batch.data;for(let i=0;i<a.length;i+=STRIDE){const x=a[i],y=a[i+1],z=a[i+2],w=a[i+3]/2,h=a[i+4]/2,d=a[i+5]/2;if(rayBoxDistance(origin,direction,x-w,y-h,z-d,x+w,y+h,z+d,limit)!==Infinity)return null;}
+    }return selected;
+  }
   // Port-bit aliases eliminate hubs, splitters and hierarchy boundaries, never a bus-valued block.
   function compile(source){
     const state=C.validate(source),parent=new Map(),records=[],primitives=[],forced=[],netCache=new Map(),context=C.createSimulationContext(state);
@@ -169,5 +180,5 @@
   }
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,advanceCamera,look,compile,build,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,advanceCamera,look,compile,build,tint,updates};
 });
