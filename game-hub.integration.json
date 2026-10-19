@@ -11,7 +11,12 @@
     "styles.css",
     "src/core.js",
     "src/expanded.js",
-    "src/app.js"
+    "src/app.js",
+    "src/minecraft-model.js",
+    "src/minecraft-view.js",
+    "src/vendor/three.min.js",
+    "src/vendor/THREE-LICENSE.txt",
+    "src/vendor/three.provenance.json"
   ],
   "license": "MIT",
   "storageContract": "logic-circuit-dynamic-v1",

@@ -1,0 +1,8 @@
+{
+  "source": "https://registry.npmjs.org/three/-/three-0.160.1.tgz",
+  "integrity": "sha512-Bgl2wPJypDOZ1stAxwfWAcJ0WQf7QzlptsxkjYiURPz+n5k4RBDLsq+6f9Y75TYxn6aHLcWz+JNmwTOXWrQTBQ==",
+  "fileSha256": "170c6789f43217c96b3170f4b42fafe135de7f7cd48497a4218f9757ee1d49fa",
+  "version": "0.160.1",
+  "license": "MIT",
+  "name": "three"
+}
