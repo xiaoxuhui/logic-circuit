@@ -3,12 +3,14 @@
   const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore,typeof module==='object'&&module.exports?require('./expanded.js'):root.LogicExpanded,typeof module==='object'&&module.exports?require('./minecraft-redstone.js'):root.LogicRedstone);
   if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicMinecraft=api;
   if(typeof importScripts==='function'){
-    let current,sim,running=false;
+    let current,sim,running=false,lastTime=0,elapsed=0;
+    const now=()=>typeof performance==='object'?performance.now():Date.now(),resetClock=()=>{lastTime=now();elapsed=0;};
     const send=(force=false)=>{if(!sim)return;const updates=api.updates(sim.drain());if(updates.length||force)root.postMessage({updates,tick:sim.tick,pending:sim.pending.size});};
-    root.onmessage=e=>{try{const data=e.data;if(data.type==='toggle'){if(sim?.toggle(data.key))send();return;}if(data.type==='step'){sim?.step().forEach(b=>sim.changes.add(b));send(true);return;}if(data.type==='running'){running=data.value;return;}
-      current=api.build(data.state,(progress,message)=>root.postMessage({progress,message}),{basis:data.basis});sim=current.simulation;sim.drain();const {world,simulation,...model}=current;root.postMessage({model},model.batches.map(b=>b.data.buffer));
+    function advanceClock(){const time=now();elapsed+=Math.max(0,time-lastTime);lastTime=time;if(!sim||!running||!sim.pending.size){elapsed=0;return;}const steps=Math.min(40,Math.floor(elapsed/api.GAME_TICK_MS));if(!steps)return;elapsed-=steps*api.GAME_TICK_MS;for(let i=0;i<steps&&sim.pending.size;i++)sim.step().forEach(b=>sim.changes.add(b));if(!sim.pending.size)elapsed=0;send(true);}
+    root.onmessage=e=>{try{const data=e.data;if(data.type==='toggle'){advanceClock();resetClock();if(sim?.toggle(data.key))send();return;}if(data.type==='step'){resetClock();sim?.step().forEach(b=>sim.changes.add(b));send(true);return;}if(data.type==='running'){advanceClock();running=!!data.value;resetClock();send(true);return;}
+      current=api.build(data.state,(progress,message)=>root.postMessage({progress,message}),{basis:data.basis});sim=current.simulation;running=false;resetClock();sim.drain();const {world,simulation,...model}=current;root.postMessage({model},model.batches.map(b=>b.data.buffer));
     }catch(error){root.postMessage({error:error.message||'转换失败'});}};
-    setInterval(()=>{if(sim&&running&&sim.pending.size){sim.step().forEach(b=>sim.changes.add(b));send();}},api.GAME_TICK_MS);
+    setInterval(advanceClock,api.GAME_TICK_MS);
   }
 })(typeof globalThis!=='undefined'?globalThis:this,function(C,E,R){
   'use strict';
