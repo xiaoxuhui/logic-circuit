@@ -6,6 +6,7 @@ test('the observed nested XOR keeps every input reachable and all four physical 
   assert.equal(m.world.at({x:12,y:1,z:8}),undefined,'unused physical output component is omitted after the signal branches earlier');
   assert.equal(m.world.at({x:12,y:0,z:8}),undefined,'its unused support is omitted too');
   for(const b of m.world.cells.values())if(b.kind==='dust')for(const q of m.world.dustNeighbors(b))assert.equal(q.net,b.net);
+  const seen=new Set();for(const b of m.world.cells.values())if(b.kind==='dust'&&!seen.has(b)){const queue=[b];seen.add(b);let edges=0;for(let i=0;i<queue.length;i++)for(const q of m.world.dustNeighbors(queue[i])){edges++;if(!seen.has(q)){seen.add(q);queue.push(q);}}assert.equal(edges/2,queue.length-1,'same-net dust forms a tree, without square or stair loops');}
   for(const mask of [0,1,3,2,0]){for(const [bit,id] of ['a','b'].entries()){const lever=m.levers.find(l=>l.id===id);if(m.world.cells.get(lever.key).on!==!!(mask>>bit&1))m.simulation.toggle(lever.key);}for(let i=0;i<80;i++)m.simulation.step();assert.equal(m.world.cells.get(m.lamps[0].key).on,mask===1||mask===2,'physical XOR '+mask);}
   assert.equal(JSON.stringify(source),before);
 });

@@ -32,6 +32,36 @@
     if(points.length<2||points.some(p=>p.y!==points[0].y))return [];const crosses=[];for(let i=0;i<points.length;i++){const b=world.at(points[i]);if(b&&['dust','repeater'].includes(b.kind)&&b.net!==net)crosses.push(i);}if(!crosses.length)return [];
     const paths=[];for(let height=2;height<=Math.min(7,8-points[0].y);height++){const lifts=new Uint8Array(points.length);for(const c of crosses)for(let i=Math.max(0,c-height);i<=Math.min(points.length-1,c+height);i++)lifts[i]=Math.max(lifts[i],Math.min(height,height+1-Math.abs(i-c)));if(lifts[0]||lifts.at(-1))continue;paths.push(points.map((p,i)=>({...p,y:p.y+lifts[i]})));}return paths;
   }
+  function pruneWireLoops(world){
+    const cells=[...world.cells.values()].filter(b=>b.kind==='dust'),ids=new Map(cells.map((b,i)=>[b,i])),around=[...R.directions,{x:0,y:1,z:0},{x:0,y:-1,z:0}];
+    const raw=cells.map(b=>world.dustNeighbors(b).filter(q=>q.net===b.net).map(q=>ids.get(q))),links=raw.map((list,i)=>list.filter(j=>raw[j].includes(i)));
+    const mutable=cells.map(b=>!b.owner||b.outputTail),devices=cells.map(b=>around.some(d=>['torch','repeater','lever','lamp'].includes(world.at(R.add(b,d))?.kind)));
+    const asymmetric=links.map((list,i)=>list.length!==raw[i].length);for(let i=0;i<devices.length;i++)devices[i]||=asymmetric[i];
+    const removed=new Set(),initialDegree=links.map(list=>list.length),leaves=cells.flatMap((b,i)=>mutable[i]&&!devices[i]&&initialDegree[i]<=1?[i]:[]);
+    for(let i=0;i<leaves.length;i++){const id=leaves[i];if(removed.has(id)||!mutable[id]||devices[id]||initialDegree[id]>1)continue;removed.add(id);for(const next of links[id])if(!removed.has(next)&&--initialDegree[next]<=1)leaves.push(next);}
+    for(let i=0;i<links.length;i++)links[i]=removed.has(i)?[]:links[i].filter(id=>!removed.has(id));
+    const anchors=new Set(cells.flatMap((b,i)=>!mutable[i]||devices[i]||links[i].length!==2||asymmetric[i]?[i]:[])),visited=new Set(),corridors=[],parents=cells.map((_,i)=>i);
+    const find=i=>{let root=i;while(parents[root]!==root)root=parents[root];while(parents[i]!==i){const next=parents[i];parents[i]=root;i=next;}return root;};
+    const join=(a,b)=>{a=find(a);b=find(b);if(a===b)return false;parents[b]=a;return true;};
+    const edge=(a,b)=>Math.min(a,b)+':'+Math.max(a,b);
+    // Anchor a pure ring too; otherwise it has no junction from which to walk.
+    const reached=new Set();for(let i=0;i<cells.length;i++)if(!reached.has(i)){const queue=[i];reached.add(i);let anchored=false;for(let k=0;k<queue.length;k++){const id=queue[k];anchored||=anchors.has(id);for(const next of links[id])if(!reached.has(next)){reached.add(next);queue.push(next);}}if(!anchored)anchors.add(i);}
+    for(const a of anchors)for(const first of links[a]){
+      if(visited.has(edge(a,first)))continue;let previous=a,current=first;const inside=[];visited.add(edge(a,first));
+      while(!anchors.has(current)){inside.push(current);const next=links[current].find(i=>i!==previous);visited.add(edge(current,next));previous=current;current=next;}
+      if(!inside.length)join(a,current);else corridors.push({a,b:current,inside});
+    }
+    corridors.sort((a,b)=>a.inside.length-b.inside.length||a.a-b.a||a.b-b.b);
+    for(const c of corridors)if(!join(c.a,c.b))for(const id of c.inside)removed.add(id);
+    // Removing a redundant corridor can leave a short spur beside its junction.
+    const degree=links.map(list=>list.filter(id=>!removed.has(id)).length),queue=cells.flatMap((b,i)=>mutable[i]&&!devices[i]&&degree[i]<=1?[i]:[]);
+    for(let i=0;i<queue.length;i++){const id=queue[i];if(removed.has(id)||!mutable[id]||devices[id]||degree[id]>1)continue;removed.add(id);for(const next of links[id])if(!removed.has(next)&&--degree[next]<=1)queue.push(next);}
+    for(const id of removed){const b=cells[id];world.cells.delete(R.key(b));const below=R.add(b,{x:0,y:-1,z:0}),base=world.at(below),under=world.at(R.add(below,{x:0,y:-1,z:0}));
+      const attached=around.some(d=>{const q=world.at(R.add(below,d));return q?.kind==='torch'&&R.key(q.attached||R.add(q,{x:0,y:-1,z:0}))===R.key(below);});
+      if(base?.kind==='support'&&!attached&&!['dust','repeater','torch','lever','lamp'].includes(under?.kind))world.cells.delete(R.key(below));
+    }
+    return removed.size;
+  }
   // Port-bit aliases eliminate hubs, splitters and hierarchy boundaries, never a bus-valued block.
   function compile(source){
     const state=C.validate(source),parent=new Map(),records=[],primitives=[],forced=[],netCache=new Map(),context=C.createSimulationContext(state);
@@ -169,19 +199,20 @@
     for(const [net,group] of [...terminals].sort((a,b)=>(b[1].sources[0]?.x||0)-(a[1].sources[0]?.x||0)||(a[1].sources[0]?.z||0)-(b[1].sources[0]?.z||0))){if(group.sources.length){const start=group.sources[0];for(const end of [...group.sources.slice(1),...group.targets]){const ps=route(start,end,net);if(!ps){unrouted.push({from:R.key(start),to:R.key(end),net});continue;}for(const p of ps)support(p.x,p.y-1,p.z);for(const p of ps)dust(p.x,p.y,p.z,net,netSignal.get(net));paths.push({net,points:ps,buffer:group.sources.length===1,capacity:start.capacity||12,tail:end.tail||0});}}
       if(++done%200===0)progress(35+Math.round(done/terminals.size*40),'正在连接单比特网络 '+done+' / '+terminals.size);
     }
+    if(pruneWireLoops(world)){
+      paths.length=0;const skipped=new Set(unrouted.map(p=>p.net+'|'+p.to));
+      for(const [net,group] of terminals)if(group.sources.length){const old=group.sources[0];let start=world.at(old),penalty=0;
+        if(start?.kind!=='dust'){const candidates=(ownerBlocks.get(old.owner)||[]).filter(b=>b.kind==='dust'&&b.net===net&&world.at(b)===b);candidates.sort((a,b)=>(Math.abs(a.x-old.x)+Math.abs(a.y-old.y)+Math.abs(a.z-old.z))-(Math.abs(b.x-old.x)+Math.abs(b.y-old.y)+Math.abs(b.z-old.z)));start=candidates[0];if(start)penalty=Math.abs(start.x-old.x)+Math.abs(start.y-old.y)+Math.abs(start.z-old.z);}
+        if(!start)continue;const previous=new Map([[start,null]]),queue=[start];for(let i=0;i<queue.length;i++)for(const next of world.dustNeighbors(queue[i]))if(next.net===net&&!previous.has(next)){previous.set(next,queue[i]);queue.push(next);}
+        for(const end of [...group.sources.slice(1),...group.targets]){if(skipped.has(net+'|'+R.key(end)))continue;const target=world.at(end);if(!previous.has(target))throw Error('清理重复线路后端口未连通：'+R.key(end));const points=[];for(let p=target;p;p=previous.get(p))points.push(p);points.reverse();paths.push({net,points,buffer:group.sources.length===1,capacity:Math.max(1,(old.capacity||12)-penalty),tail:end.tail||0});}
+      }
+    }
     // Walk the real available strength; a clear short route gets no repeater.
     for(const path of paths)if(path.buffer){let cursor=0,strength=path.capacity;const ps=path.points,last=ps.length-1;while(cursor<last){let next=last+1;for(let i=cursor+1;i<=last;i++)if(world.at(ps[i])?.kind==='repeater'){next=i;break;}const reach=next<=last?next-cursor:last-cursor+path.tail;
         if(next<=last&&reach<=strength){cursor=next;strength=16;continue;}if(next>last&&reach<strength)break;
         let chosen=-1;for(let i=Math.min(last-1,cursor+strength);i>cursor;i--){const p=ps[i],a=ps[i-1],c=ps[i+1],b=world.at(p),dx=c.x-a.x,dz=c.z-a.z;if(b?.kind==='dust'&&p.y===a.y&&p.y===c.y&&Math.abs(dx)+Math.abs(dz)===2&&!(dx&&dz)&&world.dustNeighbors(p).length===2){chosen=i;break;}}
         if(chosen<0){warnings.push('一条长线缺少可用的中继直段');break;}const b=world.at(ps[chosen]),a=ps[chosen-1],c=ps[chosen+1];b.kind='repeater';b.role='buffer';b.facing=R.directions.findIndex(d=>d.x===Math.sign(c.x-a.x)&&d.z===Math.sign(c.z-a.z));b.delay=1;b.on=!!netSignal.get(path.net);cursor=chosen;strength=16;
       }}
-    // Actual routing may leave the prefab output tip behind an earlier branch.
-    const tails=[...world.cells.values()].filter(b=>b.outputTail),adjacent=[...R.directions,{x:0,y:1,z:0},{x:0,y:-1,z:0}];
-    for(let changed=true;changed;){changed=false;for(const b of tails){if(world.at(b)!==b||b.kind!=='dust'||world.dustNeighbors(b).length>1)continue;
-      const touchesDevice=adjacent.some(d=>{const q=world.at(R.add(b,d));return q&&['repeater','torch','lever','lamp'].includes(q.kind);});if(touchesDevice)continue;
-      world.cells.delete(R.key(b));const below=R.add(b,{x:0,y:-1,z:0}),base=world.at(below);
-      if(base?.kind==='support'&&!adjacent.some(d=>{const q=world.at(R.add(below,d));return q?.kind==='torch'&&R.key(q.attached||R.add(q,{x:0,y:-1,z:0}))===R.key(below);}))world.cells.delete(R.key(below));changed=true;
-    }}
     const errors=world.validate();if(errors.length)throw Error(errors[0]);if(unrouted.length)warnings.push(unrouted.length+' 条连接未能安全布通，已留空，未使用穿透线路');if(graph.primitives.some(p=>p.node.type==='delay'))warnings.push('原延迟线逐位转换为 1–4 红石刻（2–8 游戏刻）中继器，物理计时与原“下一步”寄存器不同');
     progress(80,'正在验证红石连接并生成方块实例…');const sim=new R.Simulator(world);sim.drain();const batches=new Map(),bounds={min:{x:Infinity,y:Infinity,z:Infinity},max:{x:-Infinity,y:-Infinity,z:-Infinity}};let instanceCount=0,maxWireHeight=1;
     function render(b,kind,x,y,z,w=1,h=1,d=1,yaw=0,tilt=0){const k=kind+':'+Math.floor(x/192)+':'+Math.floor(z/192),batch=batches.get(k)||{kind,key:k,values:[]};if(!batches.has(k))batches.set(k,batch);const index=batch.values.length/STRIDE,color=tint(b,kind);batch.values.push(x,y,z,w,h,d,yaw,...color,tilt);(b.renders||(b.renders=[])).push({key:k,index,kind});instanceCount++;for(const axis of ['x','y','z']){const v={x,y,z}[axis],extent={x:w,y:h,z:d}[axis]/2;bounds.min[axis]=Math.min(bounds.min[axis],v-extent);bounds.max[axis]=Math.max(bounds.max[axis],v+extent);}}
@@ -199,5 +230,5 @@
   }
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,bridgePaths,advanceCamera,look,compile,build,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,bridgePaths,pruneWireLoops,advanceCamera,look,compile,build,tint,updates};
 });
