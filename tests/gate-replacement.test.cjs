@@ -1,5 +1,13 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('../src/core.js');
 
+test('replacement preserves input and output port orientation in every direction and scope',()=>{
+  for(const rotation of [0,90,180,270])for(const owner of [null,'parent']){
+    const s=fixture(),id=owner?'child':'a',local=owner?s.definitions[owner]:s;local.nodes.find(n=>n.id===id).rotation=rotation;
+    const before=C.ports(local.nodes.find(n=>n.id===id),s.definitions),next=C.replaceGate(s,owner,id,{type:'delay',bits:1}),node=(owner?next.definitions[owner]:next).nodes.find(n=>n.id===id);
+    assert.equal(node.rotation,rotation);const ports=C.ports(node,next.definitions),size=C.size(node,next.definitions);for(const port of ports){const old=before.find(p=>p.dir===port.dir);assert.ok(old);const side=rotation===0?(port.dir==='in'?'left':'right'):rotation===90?(port.dir==='in'?'top':'bottom'):rotation===180?(port.dir==='in'?'right':'left'):(port.dir==='in'?'bottom':'top');assert.equal(side==='left'?port.x-node.x:side==='right'?node.x+size.w-port.x:side==='top'?port.y-node.y:node.y+size.h-port.y,0);}
+  }
+});
+
 test('replacement keeps every wire, shared junction and compatible port across all component types',()=>{
   const kinds=['nand','input','output','delay','hub','splitter','custom'];
   for(const from of kinds)for(const to of kinds){

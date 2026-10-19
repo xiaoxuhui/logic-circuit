@@ -2,6 +2,24 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),C=require
 const n=(id,type,x,y,extra={})=>({id,type,x,y,...extra}),p=(node,port=0,dir='out')=>({node,port,dir});
 const base=()=>({version:1,nodes:[n('a','input',0,0),n('b','input',0,160),n('g','nand',250,0),n('o','output',500,0)],wires:[{id:'a',a:p('a'),b:p('g',0,'in')},{id:'b',a:p('b'),b:p('g',1,'in')},{id:'q',a:p('g'),b:p('o',0,'in')}],definitions:{}});
 const nested=()=>{const s=base();s.definitions.g=C.makeDefinition(s,'自定义 A');s.nodes[2]={...s.nodes[2],type:'custom',def:'g'};s.definitions.h=C.makeDefinition(s,'嵌套 B');s.nodes[2].def='h';return s;};
+
+test('expanded leaf ports keep all four directions and wires leave along the outward normal',()=>{
+  const definitions={pass:C.makeDefinition({nodes:[n('i','input',0,0),n('o','output',400,0)],wires:[{id:'w',a:p('i'),b:p('o',0,'in')}]},'直通')};
+  for(const rotation of [0,90,180,270])for(const type of ['input','output','nand','delay','hub','splitter','custom'])for(const compact of [false,true]){
+    const node=n('target',type,0,0,{rotation,bits:4,...(type==='custom'?{def:'pass'}:{})}),ports=C.ports(node,definitions),s={version:1,nodes:[node],definitions,wires:ports.map((port,i)=>({id:'w'+i,a:{node:'target',dir:port.dir,port:port.port},b:{x:900,y:400+i*30},via:[]}))},before=C.clone(s),view=E.build(s,{direct:true,compact}),layout=view.layouts.at(-1),box=layout.boxes[0];
+    assert.deepEqual({w:box.w,h:box.h},C.size(node,definitions));assert.ok(view.svg.includes('transform="'+C.rotationTransform(node,definitions)+'"'));
+    for(const port of ports){const route=layout.routes.find(r=>r.ports.some(p=>p.dir===port.dir&&p.port===port.port)),start={x:box.x+port.x,y:box.y+port.y},path=route.paths.find(ps=>ps[0].x===start.x&&ps[0].y===start.y),next=path.find(q=>q.x!==start.x||q.y!==start.y),sign=port.dir==='out'?1:-1,angle=rotation*Math.PI/180,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;
+      assert.ok((next.x-start.x)*dx+(next.y-start.y)*dy>0,type+' '+rotation+' '+port.dir);
+      assert.ok((next.x-start.x)*dy-(next.y-start.y)*dx===0);
+    }
+    assert.deepEqual(s,before);
+  }
+});
+
+test('fully expanded nested NAND and delay retain their saved input and output orientation',()=>{
+  const s=base();s.nodes.find(n=>n.id==='g').rotation=270;s.nodes.push(n('delay','delay',250,200,{rotation:90}));s.wires.push({id:'delay',a:p('g'),b:p('delay',0,'in')});s.definitions.inner=C.makeDefinition(s,'内部');s.nodes=[n('a','input',0,0),n('b','input',0,200),n('gate','custom',300,0,{def:'inner'}),n('o','output',700,0)];s.wires=[{id:'a',a:p('a'),b:p('gate',0,'in')},{id:'b',a:p('b'),b:p('gate',1,'in')},{id:'q',a:p('gate'),b:p('o',0,'in')}];
+  const view=E.build(s),layout=view.layouts.find(l=>l.scope==='root/gate');for(const id of ['g','delay']){const node=s.definitions.inner.nodes.find(n=>n.id===id),box=layout.boxes.find(b=>b.id===id);assert.deepEqual({w:box.w,h:box.h},C.size(node,s.definitions));}
+});
 test('layer limits expand exactly the requested custom levels without changing signals or source',()=>{
   const s=nested();s.definitions.j=C.makeDefinition(s,'第三层');s.nodes[2].def='j';s.nodes[0].value=1;s.nodes[1].value=1;
   const before=C.clone(s);E.clearCache();
