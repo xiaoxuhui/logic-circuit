@@ -118,5 +118,3 @@
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined})));}
   return {BLOCKS,STRIDE,advanceCamera,look,compile,build,tint,updates};
 });
-
-
