@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "definitions": {
+    "nand": {
+      "name": "测试 NAND",
+      "inputs": [
+        {
+          "id": "a",
+          "label": "I1",
+          "width": 1
+        },
+        {
+          "id": "b",
+          "label": "I2",
+          "width": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": "o",
+          "label": "O1",
+          "width": 1
+        }
+      ],
+      "nodes": [
+        {
+          "id": "a",
+          "type": "input",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "b",
+          "type": "input",
+          "x": 0,
+          "y": 160
+        },
+        {
+          "id": "g",
+          "type": "nand",
+          "x": 260,
+          "y": 0
+        },
+        {
+          "id": "o",
+          "type": "output",
+          "x": 520,
+          "y": 0
+        }
+      ],
+      "wires": [
+        {
+          "id": "a",
+          "a": {
+            "node": "a",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 0
+          }
+        },
+        {
+          "id": "b",
+          "a": {
+            "node": "b",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 1
+          }
+        },
+        {
+          "id": "q",
+          "a": {
+            "node": "g",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "o",
+            "dir": "in",
+            "port": 0
+          }
+        }
+      ]
+    },
+    "not": {
+      "name": "测试 NOT",
+      "inputs": [
+        {
+          "id": "i",
+          "label": "I1",
+          "width": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": "o",
+          "label": "O1",
+          "width": 1
+        }
+      ],
+      "nodes": [
+        {
+          "id": "i",
+          "type": "input",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "g",
+          "type": "custom",
+          "x": 260,
+          "y": 0,
+          "def": "nand"
+        },
+        {
+          "id": "o",
+          "type": "output",
+          "x": 520,
+          "y": 0
+        }
+      ],
+      "wires": [
+        {
+          "id": "a",
+          "a": {
+            "node": "i",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 0
+          }
+        },
+        {
+          "id": "b",
+          "a": {
+            "node": "i",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 1
+          }
+        },
+        {
+          "id": "q",
+          "a": {
+            "node": "g",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "o",
+            "dir": "in",
+            "port": 0
+          }
+        }
+      ]
+    },
+    "and": {
+      "name": "测试 AND",
+      "inputs": [
+        {
+          "id": "a",
+          "label": "I1",
+          "width": 1
+        },
+        {
+          "id": "b",
+          "label": "I2",
+          "width": 1
+        }
+      ],
+      "outputs": [
+        {
+          "id": "o",
+          "label": "O1",
+          "width": 1
+        }
+      ],
+      "nodes": [
+        {
+          "id": "a",
+          "type": "input",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "b",
+          "type": "input",
+          "x": 0,
+          "y": 160
+        },
+        {
+          "id": "g",
+          "type": "custom",
+          "x": 260,
+          "y": 0,
+          "def": "nand"
+        },
+        {
+          "id": "ng",
+          "type": "custom",
+          "x": 520,
+          "y": 0,
+          "def": "not"
+        },
+        {
+          "id": "o",
+          "type": "output",
+          "x": 780,
+          "y": 0
+        }
+      ],
+      "wires": [
+        {
+          "id": "a",
+          "a": {
+            "node": "a",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 0
+          }
+        },
+        {
+          "id": "b",
+          "a": {
+            "node": "b",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "g",
+            "dir": "in",
+            "port": 1
+          }
+        },
+        {
+          "id": "q",
+          "a": {
+            "node": "g",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "ng",
+            "dir": "in",
+            "port": 0
+          }
+        },
+        {
+          "id": "r",
+          "a": {
+            "node": "ng",
+            "dir": "out",
+            "port": 0
+          },
+          "b": {
+            "node": "o",
+            "dir": "in",
+            "port": 0
+          }
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "i",
+      "type": "input",
+      "x": 0,
+      "y": 0,
+      "label": "独立测试输入"
+    },
+    {
+      "id": "g0",
+      "type": "custom",
+      "x": 200,
+      "y": 0,
+      "def": "and"
+    },
+    {
+      "id": "o",
+      "type": "output",
+      "x": 400,
+      "y": 0,
+      "label": "独立测试输出"
+    }
+  ],
+  "wires": [
+    {
+      "id": "a0",
+      "a": {
+        "node": "i",
+        "dir": "out",
+        "port": 0
+      },
+      "b": {
+        "node": "g0",
+        "dir": "in",
+        "port": 0
+      }
+    },
+    {
+      "id": "b0",
+      "a": {
+        "node": "i",
+        "dir": "out",
+        "port": 0
+      },
+      "b": {
+        "node": "g0",
+        "dir": "in",
+        "port": 1
+      }
+    },
+    {
+      "id": "q",
+      "a": {
+        "node": "g0",
+        "dir": "out",
+        "port": 0
+      },
+      "b": {
+        "node": "o",
+        "dir": "in",
+        "port": 0
+      }
+    }
+  ]
+}
