@@ -13,7 +13,7 @@
 })(typeof globalThis!=='undefined'?globalThis:this,function(C,E,R){
   'use strict';
   const STRIDE=11;
-  const BLOCKS=Object.freeze({support:{name:'白色混凝土',color:0xc7d1cc},slab:{name:'上半砖',color:0x9aa9a0},dust:{name:'红石粉',color:0x9f2922},torch:{name:'红石火把',color:0xcf6140},repeater:{name:'红石中继器',color:0xc5bab0},leverBase:{name:'拉杆底座',color:0x858e88},leverHandle:{name:'拉杆',color:0xb2a17b},lamp:{name:'红石灯',color:0xb27836}});
+  const BLOCKS=Object.freeze({support:{name:'白色混凝土',color:0xc7d1cc},slab:{name:'上半砖',color:0x9aa9a0},dust:{name:'红石粉',color:0x9f2922},torch:{name:'红石火把',color:0xcf6140},repeater:{name:'红石中继器',color:0xc5bab0},leverBase:{name:'拉杆底座',color:0x858e88},leverHandle:{name:'拉杆',color:0xb2a17b},lamp:{name:'红石灯',color:0xb27836},torchStem:{name:'火把木柄',color:0x947546},repeaterTrack:{name:'中继器方向线',color:0x802d26},repeaterGroove:{name:'中继器档位',color:0x85847b}});
   const rgb=hex=>[(hex>>16&255)/255,(hex>>8&255)/255,(hex&255)/255];
   function advanceCamera(camera,keys,seconds,speed=12){const has=key=>keys.has?keys.has(key):keys.includes(key),forward=Number(has('KeyW'))-Number(has('KeyS')),right=Number(has('KeyD'))-Number(has('KeyA')),up=Number(has('Space'))-Number(has('ShiftLeft')||has('ShiftRight')),distance=Math.min(.05,Math.max(0,seconds))*speed/Math.max(1,Math.hypot(forward,right,up)),sin=Math.sin(camera.yaw),cos=Math.cos(camera.yaw);return {...camera,x:camera.x+(cos*right-sin*forward)*distance,y:camera.y+up*distance,z:camera.z+(-sin*right-cos*forward)*distance};}
   function look(camera,dx,dy){return {...camera,yaw:camera.yaw-dx*.0025,pitch:Math.max(-Math.PI/2+.02,Math.min(Math.PI/2-.02,camera.pitch-dy*.0025))};}
@@ -41,15 +41,16 @@
     return {state,records,primitives,forced};
   }
   function build(source,progress=()=>{}){
-    progress(5,'正在逐位展开端口连接…');const graph=compile(source),world=new R.World(),terminals=new Map(),warnings=[],unrouted=[],tiles=new Set(),levers=[],lamps=[];
-    const forced=new Map(graph.forced.map(p=>[p.token,p])),netSignal=new Map();let serial=0,currentOwner=null;
+    progress(5,'正在逐位展开端口连接…');const graph=compile(source),world=new R.World(),terminals=new Map(),warnings=[],unrouted=[],reserved=new Map(),levers=[],lamps=[];
+    const forced=new Map(graph.forced.map(p=>[p.token,p])),netSignal=new Map();let serial=0,currentOwner=null,maxReservedZ=0;
     function put(kind,x,y,z,extra={}){return world.put({kind,x,y,z,owner:currentOwner,...extra});}
     function support(x,y,z){const p={x,y,z},old=world.at(p);if(!old)put('support',x,y,z);else if(!R.supports(old))throw Error('支撑与元件重叠：'+R.key(p));}
     function dust(x,y,z,net,on=false){support(x,y-1,z);const old=world.at({x,y,z});if(old){if(old.kind!=='dust'||old.net!==net)throw Error('线路重叠：'+R.key(old));return old;}return put('dust',x,y,z,{net,power:on?15:0});}
     function device(kind,x,y,z,net,on,extra={}){if(kind!=='torch')support(x,y-1,z);return put(kind,x,y,z,{net,on,...extra});}
     function terminal(net,p,source=false){if(source&&forced.has(net))return;const group=terminals.get(net)||{sources:[],targets:[]};if(!terminals.has(net))terminals.set(net,group);group[source?'sources':'targets'].push(p);}
-    const recordSlots=new Map(graph.records.map((record,i)=>[record,i])),laneRows=Math.max(1,Math.ceil((graph.records.length+graph.forced.length)/64));
-    function tile(p){if(!recordSlots.has(p.record))recordSlots.set(p.record,graph.records.length+serial++);const i=recordSlots.get(p.record),band=Math.floor(i/64),row=band+p.bit*laneRows,col=band%2?63-i%64:i%64,x=4+col*24,z=4+row*20;tiles.add(col+','+row);return {x,z,reversed:!!(band%2)};}
+    const recordSlots=new Map(graph.records.map((record,i)=>[record,i])),maxBits=graph.records.reduce((max,record)=>Math.max(max,record.bits),1),bandHeight=Math.max(20,maxBits*3+10);
+    function reserve(x,z,complex){const rect={minX:x-1,maxX:x+11,minZ:z+(complex?-1:3),maxZ:z+(complex?9:5)},col=Math.floor((x-4)/24);maxReservedZ=Math.max(maxReservedZ,rect.maxZ);for(let bucket=Math.floor(rect.minZ/20);bucket<=Math.floor(rect.maxZ/20);bucket++){const k=col+','+bucket;if(!reserved.has(k))reserved.set(k,[]);reserved.get(k).push(rect);}}
+    function tile(p){if(!recordSlots.has(p.record))recordSlots.set(p.record,graph.records.length+serial++);const i=recordSlots.get(p.record),band=Math.floor(i/64),col=band%2?63-i%64:i%64,x=4+col*24,z=4+band*bandHeight+p.bit*3;reserve(x,z,p.node.type==='nand');return {x,z,reversed:!!(band%2)};}
     function make(p,isForce=false){const {x,z,reversed}=tile(p),{record,bit}=p,type=p.node.type,logicalNet=p.output,local=record.scope+'/'+record.id+'/'+bit,net=forced.has(logicalNet)&&!isForce?local+'/isolated':logicalNet;
       currentOwner=local;
       const X=dx=>x+(reversed?10-dx:dx);
@@ -70,16 +71,16 @@
     for(const p of graph.primitives.sort((a,b)=>a.bit-b.bit))make(p);
     for(const p of graph.forced){const record={id:'force:'+p.id,scope:p.scope,type:'input',label:'临时输入 '+p.id,bits:1,signal:[Number(p.on)]};make({record,node:{type:'input'},bit:p.bit,output:p.token,on:p.on},true);}
     // Merge multiple drivers through separate buffered branches into real dust OR junctions.
-    let extraTile=0;const extraRow=1+[...tiles].reduce((max,k)=>Math.max(max,Number(k.split(',')[1])),0);
+    let extraTile=0;const extraRow=1+Math.ceil(maxReservedZ/20);
     const ownerBlocks=new Map();for(const b of world.cells.values()){if(!ownerBlocks.has(b.owner))ownerBlocks.set(b.owner,[]);ownerBlocks.get(b.owner).push(b);}
     for(const [net,group] of [...terminals])if(group.sources.length>1){const sources=group.sources.slice();group.sources=[];const branches=sources.map((source,i)=>{const name=net+'/driver'+i;for(const b of ownerBlocks.get(source.owner)||[])if(b.net===net)b.net=name;terminals.set(name,{sources:[source],targets:[]});netSignal.set(name,!!netSignal.get(net));return name;});let previous=branches[0];
-      for(let i=1;i<branches.length;i++){const index=extraTile++,col=index%64,row=extraRow+Math.floor(index/64),x=4+col*24,z=4+row*20,out=i===branches.length-1?net:net+'/merge'+i;tiles.add(col+','+row);currentOwner=out+'/junction';
+      for(let i=1;i<branches.length;i++){const index=extraTile++,col=index%64,row=extraRow+Math.floor(index/64),x=4+col*24,z=4+row*20,out=i===branches.length-1?net:net+'/merge'+i;reserve(x,z,true);currentOwner=out+'/junction';
         for(const [j,input] of [previous,branches[i]].entries()){const Z=z+(j?7:1);for(let dx=-2;dx<=1;dx++)dust(x+dx,1,Z,input,false);terminal(input,world.at({x:x-2,y:1,z:Z}));device('repeater',x+2,1,Z,input,false,{delay:1,facing:0});for(let dx=3;dx<=6;dx++)dust(x+dx,1,Z,out,false);}
         for(let dz=2;dz<7;dz++)dust(x+6,1,z+dz,out,false);dust(x+7,1,z+4,out,false);device('repeater',x+8,1,z+4,out,false,{delay:1,facing:0});for(let dx=9;dx<=12;dx++)dust(x+dx,1,z+4,out,false);terminal(out,world.at({x:x+12,y:1,z:z+4}),true);previous=out;
       }
     }
     currentOwner=null;
-    const tileBlocked=p=>{if(p.y>3)return false;const col=Math.floor((p.x-3)/24),row=Math.floor((p.z-3)/20);return tiles.has(col+','+row)&&p.x>=3+col*24&&p.x<=15+col*24&&p.z>=3+row*20&&p.z<=13+row*20;};
+    const tileBlocked=p=>p.y<=3&&(reserved.get(Math.floor((p.x-3)/24)+','+Math.floor(p.z/20))||[]).some(rect=>p.x>=rect.minX&&p.x<=rect.maxX&&p.z>=rect.minZ&&p.z<=rect.maxZ);
     function legal(p,net){const old=world.at(p);if(old)return old.kind==='dust'&&old.net===net;if(tileBlocked(p))return false;const below=world.at({...p,y:p.y-1});if(below&&!R.supports(below))return false;
       for(const d of R.directions)for(let dy=-1;dy<=1;dy++){const q=world.at({x:p.x+d.x,y:p.y+dy,z:p.z+d.z});if(q&&['dust','repeater','torch','lever'].includes(q.kind)&&q.net!==net)return false;}
       const under=world.at({...p,y:p.y-2});if(under?.kind==='torch')return false;return true;
@@ -108,13 +109,13 @@
       else if(b.kind==='dust'){const links=world.dustNeighbors(b),xs=links.some(p=>p.x!==b.x),zs=links.some(p=>p.z!==b.z);for(const d of R.directions){const q=world.at(R.add(b,d));if(q&&['torch','repeater','lever','support','lamp'].includes(q.kind))links.push(q);}const X=xs||links.some(p=>p.x!==b.x),Z=zs||links.some(p=>p.z!==b.z);if(X||!Z)render(b,'dust',x,y+.035,z,1,.045,.1);if(Z)render(b,'dust',x,y+.035,z,.1,.045,1);for(const q of world.dustNeighbors(b))if(q.y===b.y+1){const dx=q.x-b.x,dz=q.z-b.z;render(b,'dust',x+dx*.5,y+.5,z+dz*.5,dx?.035:.1,1,dz?.035:.1);}}
       else if(b.kind==='lever'){render(b,'leverBase',x,y+.1,z,.65,.2,.65);render(b,'leverHandle',x,y+.45,z,.12,.65,.12,0,b.on?-.5:.5);}
       else if(b.kind==='torch'){const attached=b.attached,dx=attached?b.x-attached.x:0,dz=attached?b.z-attached.z:0;render(b,'torch',x-dx*.25,y+.4,z-dz*.25,.14,.7,.14,dz?Math.PI/2:0,dx||dz?-.35:0);}
-      else if(b.kind==='repeater'){render(b,'repeater',x,y+.08,z,.95,.15,.95);for(const offset of [-.25,.1+b.delay*.08])render(b,'torch',x+R.directions[b.facing].x*offset,y+.3,z+R.directions[b.facing].z*offset,.1,.3,.1);}
+      else if(b.kind==='repeater'){const direction=R.directions[b.facing],yaw=-b.facing*Math.PI/2;render(b,'repeater',x,y+.0625,z,.95,.125,.95);render(b,'repeaterTrack',x,y+.137,z,.65,.02,.045,yaw);for(const side of [-1,1])render(b,'repeaterTrack',x+direction.x*.32-direction.z*side*.055,y+.14,z+direction.z*.32+direction.x*side*.055,.18,.02,.035,yaw+side*Math.PI/4);for(const offset of [.3125,.0625-(b.delay-1)*.125]){render(b,'torchStem',x+direction.x*offset,y+.25,z+direction.z*offset,.085,.24,.085);render(b,'torch',x+direction.x*offset,y+.4,z+direction.z*offset,.14,.14,.14);}if(b.role==='delay')for(let tick=0;tick<4;tick++)render(b,'repeaterGroove',x+direction.x*(.0625-tick*.125),y+.138,z+direction.z*(.0625-tick*.125),.025,.018,.5,yaw);}
       else if(b.kind==='lamp')render(b,'lamp',x,y+.5,z);
     }
     if(!instanceCount){bounds.min={x:-1,y:0,z:-1};bounds.max={x:1,y:1,z:1};}for(const item of [...levers,...lamps]){item.renders=world.cells.get(item.key).renders;item.on=!!world.cells.get(item.key).on;}const focus=levers[0]||graph.records[0]||{x:0,y:1,z:0};
     return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:new Float32Array(b.values)})),instanceCount,components:graph.records,bounds,focus,library:'内置红石方块',snapshot:true,physical:true,levers,lamps,warnings,unrouted,world,simulation:sim};
   }
-  function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
+  function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined})));}
   return {BLOCKS,STRIDE,advanceCamera,look,compile,build,tint,updates};
 });
