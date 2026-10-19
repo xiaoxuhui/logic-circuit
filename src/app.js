@@ -67,7 +67,7 @@
     if(cameraFrame!==null){cancelAnimationFrame(cameraFrame);cameraFrame=null;}syncSvgCamera();
     if(expanded?.view.compact)drawExpanded();
   }
-  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2},moving=false){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;setCamera(moving);save();}
+  function zoom(factor,p={x:svg.clientWidth/2,y:svg.clientHeight/2},moving=false){const scale=Math.max(expanded?.025:.2,Math.min(2.5,camera.scale*factor)),ratio=scale/camera.scale;camera.x=p.x-(p.x-camera.x)*ratio;camera.y=p.y-(p.y-camera.y)*ratio;camera.scale=scale;if(gesture&&['pan','instance-node','wire-select','delay-inspect'].includes(gesture.type)){gesture.camera={...camera};gesture.start={...p};gesture.moved=true;}setCamera(moving);save();}
   function fit(initialView=false){
     if(expanded){const view=expanded.view,top=expanded.instanceView?180:100,bottom=expanded.instanceView?140:80,fitted=Math.max(.025,Math.min(1,(svg.clientWidth-80)/view.w,(svg.clientHeight-top-bottom)/view.h)),scale=initialView?Math.max(.8,fitted):fitted;camera={x:initialView?40:(svg.clientWidth-view.w*scale)/2,y:initialView?140:top+(svg.clientHeight-top-bottom-view.h*scale)/2,scale};setCamera();save();return;}
     if(!state.nodes.length){camera={x:svg.clientWidth/2,y:svg.clientHeight/2,scale:1};setCamera();return;}
