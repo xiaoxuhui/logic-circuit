@@ -363,14 +363,14 @@
     if(inputs.length>16||outputs.length>16)throw Error('封装最多支持 16 个输入和 16 个输出');
     return {name,inputs,outputs,nodes:clone(state.nodes),wires:clone(state.wires)};
   }
-  function updateDefinition(root,id,edited){
+  function updateDefinition(root,id,edited,{preserveWires=false}={}){
     const next=clone(root),old=next.definitions[id];if(!old)throw Error('自定义门不存在');
     const updated={...old,...makeDefinition(edited,old.name)};
     for(const dir of ['inputs','outputs']){const pending=new Map(updated[dir].map(p=>[p.id,p])),ordered=[];for(const p of old[dir])if(pending.has(p.id)){ordered.push(pending.get(p.id));pending.delete(p.id);}updated[dir]=ordered.concat([...pending.values()]);}
     next.definitions[id]=updated;
     for(const local of [next,...Object.values(next.definitions)]){
       const targets=new Set(local.nodes.filter(n=>n.type==='custom'&&n.def===id).map(n=>n.id));
-      local.wires=local.wires.filter(w=>{for(const e of [w.a,w.b])if(targets.has(e.node)){const dir=e.dir==='in'?'inputs':'outputs',port=old[dir][e.port],index=updated[dir].findIndex(p=>p.id===port?.id);if(index<0)return false;e.port=index;}return true;});
+      local.wires=local.wires.filter(w=>{for(const end of ['a','b']){const e=w[end];if(targets.has(e.node)){const dir=e.dir==='in'?'inputs':'outputs',port=old[dir][e.port],index=updated[dir].findIndex(p=>p.id===port?.id);if(index<0){if(!preserveWires)return false;const n=local.nodes.find(n=>n.id===e.node),p=ports(n,{...next.definitions,[id]:old}).find(p=>p.dir===e.dir&&p.port===e.port);w[end]={x:p.x,y:p.y};}else e.port=index;}}return true;});
     }
     for(const [path,value] of Object.entries(next.delayState||{})){let local=next,n;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){n=local.nodes.find(n=>n.id===parts[i]);if(!n)break;if(i<parts.length-1){if(n.type!=='custom'){n=null;break;}local=next.definitions[n.def];}}if(n?.type==='delay')next.delayState[path]=packBits(bitArray(value,width(n)));else delete next.delayState[path];}
     validate(next);
@@ -388,19 +388,20 @@
       if(ownerId&&contains(replacement.def))throw Error('替换会造成自定义门循环依赖');
     }
     const nextNode={id:node.id,x:node.x,y:node.y,...(node.rotation!==undefined?{rotation:node.rotation}:{}),...(node.label!==undefined?{label:node.label}:{}),type:replacement.type,...(replacement.type==='custom'?{def:replacement.def}:{}),...(variableWidth?{bits}:{}),...(replacement.type==='input'?{value:0}:{})},nextSpec=spec(nextNode,root.definitions);
-    const removed=local.wires.filter(w=>[w.a,w.b].some(e=>{if(e.node!==nodeId)return false;const dir=e.dir==='in'?'inputs':'outputs';return nextSpec[dir][e.port]===undefined;})).map(w=>w.id);
-    return {node:nextNode,removedWires:removed,inputs:nextSpec.inputs,outputs:nextSpec.outputs};
+    const detached=local.wires.filter(w=>[w.a,w.b].some(e=>{if(e.node!==nodeId)return false;const dir=e.dir==='in'?'inputs':'outputs';return nextSpec[dir][e.port]===undefined;})).map(w=>w.id);
+    return {node:nextNode,removedWires:[],detachedWires:detached,inputs:nextSpec.inputs,outputs:nextSpec.outputs};
   }
   function replaceGate(root,ownerId,nodeId,replacement){
-    const info=gateReplacementInfo(root,ownerId,nodeId,replacement),next=clone(root),local=ownerId?next.definitions[ownerId]:next,removed=new Set(info.removedWires);
-    local.nodes=local.nodes.map(n=>n.id===nodeId?info.node:n);local.wires=local.wires.filter(w=>!removed.has(w.id));
+    const info=gateReplacementInfo(root,ownerId,nodeId,replacement),next=clone(root),local=ownerId?next.definitions[ownerId]:next;
+    const before={...local,definitions:root.definitions};
+    for(const w of local.wires)for(const end of ['a','b']){const e=w[end];if(e.node===nodeId&&(e.dir==='in'?info.inputs:info.outputs)[e.port]===undefined){const p=anchor(e,before);w[end]={x:p.x,y:p.y};}}
+    local.nodes=local.nodes.map(n=>n.id===nodeId?info.node:n);
     // Resolve against the old hierarchy so old state cannot leak into the replacement.
     const scopeInfo=path=>{let circuit=root,owner=null;for(const part of path.split('/').slice(1)){if(owner===ownerId&&part===nodeId)return {replaced:true};const n=circuit.nodes.find(n=>n.id===part);if(n?.type!=='custom')return {owner:null};owner=n.def;circuit=root.definitions[owner];}return {owner};};
     next.delayState=Object.fromEntries(Object.entries(next.delayState||{}).filter(([path])=>!scopeInfo(path).replaced));
-    for(const [scope,forces] of Object.entries(next.scopedWireOverrides||{})){const location=scopeInfo(scope);if(location.replaced)delete next.scopedWireOverrides[scope];else if(location.owner===ownerId)for(const id of removed)delete forces[id];}
-    if(!ownerId)for(const id of removed)if(next.wireOverrides)delete next.wireOverrides[id];
+    for(const scope of Object.keys(next.scopedWireOverrides||{}))if(scopeInfo(scope).replaced)delete next.scopedWireOverrides[scope];
     const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>e.node===nodeId)){const ps=route(w.a,w.b,active,w.id);if(ps)w.via=ps.slice(1,-1);}
-    return ownerId?updateDefinition(next,ownerId,local):validate(next);
+    return ownerId?updateDefinition(next,ownerId,local,{preserveWires:true}):validate(next);
   }
   function resizeComponentBits(root,ownerId,nodeId,bits){
     const next=clone(root),local=ownerId?next.definitions[ownerId]:next,node=local?.nodes.find(n=>n.id===nodeId);
