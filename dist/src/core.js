@@ -38,6 +38,13 @@
   function wireOverlaps(w,state){const ps=points(w,state);return state.wires.some(other=>other.id!==w.id&&points(other,state).slice(1).some((q,i,tail)=>{const p=i?tail[i-1]:anchor(other.a,state);return ps.slice(1).some((b,j)=>segmentsOverlap(ps[j],b,p,q));}));}
   function wireHitsGate(w,state){const ps=points(w,state);return state.nodes.some(n=>{const box={...n,...size(n,state.definitions)};return ps.slice(1).some((q,i)=>segmentHitsBox(ps[i],q,box));});}
   const ROUTE_CLEARANCE=24;
+  const BODY_CLEARANCE=4;
+  function routeObstacles(state,aEnd,bEnd){
+    const ends=[aEnd,bEnd],boxes=state.nodes.map(n=>({id:n.id,x:n.x-BODY_CLEARANCE,y:n.y-BODY_CLEARANCE,w:size(n,state.definitions).w+2*BODY_CLEARANCE,h:size(n,state.definitions).h+2*BODY_CLEARANCE}));
+    for(const n of state.nodes)for(const p of ports(n,state.definitions))if(!ends.some(e=>e.node?key(e)===key(p):distance(e,p)<1e-7))boxes.push({id:'port:'+key(p),port:true,x:p.x-ROUTE_CLEARANCE,y:p.y-ROUTE_CLEARANCE,w:2*ROUTE_CLEARANCE,h:2*ROUTE_CLEARANCE});
+    return boxes;
+  }
+  function wireNearPort(w,state){const ps=points(w,state),boxes=routeObstacles(state,w.a,w.b).filter(r=>r.port);return ps.slice(1).some((q,i)=>boxes.some(r=>segmentHitsBox(ps[i],q,r)));}
   function routePortExits(end,p,state,boxes,clear){
     if(!end.node)return [[p]];
     const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;
@@ -50,7 +57,7 @@
     return out;
   }
   function leastOverlapRoute(aEnd,bEnd,state,ignoreWire){
-    const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-ROUTE_CLEARANCE,y:n.y-ROUTE_CLEARANCE,w:size(n,state.definitions).w+2*ROUTE_CLEARANCE,h:size(n,state.definitions).h+2*ROUTE_CLEARANCE}));
+    const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=routeObstacles(state,aEnd,bEnd);
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap((w,id)=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b,id}));}),edgeCache=new Map();
     const clear=(p,q,owner=null)=>!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
     const exits=(end,p)=>routePortExits(end,p,state,boxes,clear);
@@ -59,7 +66,7 @@
     const advance=(ps,previous={ids:new Set(),repeats:0,shared:0,length:0})=>{let {ids,repeats,shared,length}=previous;for(let i=1;i<ps.length;i++){const e=edge(ps[i-1],ps[i]);if(!e.length)continue;for(const section of e.sections){for(const id of section.ids)if(!ids.has(id))repeats++;ids=section.ids;shared+=section.length*ids.size;}length+=e.length;}return {ids,repeats,shared,length};};
     const compare=(p,q)=>p.repeats-q.repeats||p.shared-q.shared||p.priority-q.priority,better=(p,q)=>!q||compare({...p,priority:p.length},{...q,priority:q.length})<0;
     const clean=ps=>{const out=[];for(const p of ps){const q=out.at(-1);if(q&&q.x===p.x&&q.y===p.y)continue;while(out.length>1){const u=out.at(-2),v=out.at(-1);if(u.x===v.x&&v.x===p.x&&(v.y-u.y)*(p.y-v.y)>=0||u.y===v.y&&v.y===p.y&&(v.x-u.x)*(p.x-v.x)>=0)out.pop();else break;}out.push({x:p.x,y:p.y});}return out;};
-    const valid=ps=>{for(let i=1;i<ps.length;i++){if(state.nodes.some(n=>segmentHitsBox(ps[i-1],ps[i],{...n,...size(n,state.definitions)})))return false;for(let j=1;j<i;j++)if(segmentsOverlap(ps[i-1],ps[i],ps[j-1],ps[j]))return false;}return true;};
+    const valid=ps=>{for(let i=1;i<ps.length;i++){if(boxes.some(r=>r.port&&segmentHitsBox(ps[i-1],ps[i],r))||state.nodes.some(n=>segmentHitsBox(ps[i-1],ps[i],{...n,...size(n,state.definitions)})))return false;for(let j=1;j<i;j++)if(segmentsOverlap(ps[i-1],ps[i],ps[j-1],ps[j]))return false;}return true;};
     const coords=[...starts,...ends].flat(),X=[...new Set([...coords.flatMap(p=>[p.x-12,p.x,p.x+12]),...boxes.flatMap(r=>[r.x,r.x+r.w]),...segments.flatMap(s=>[s.a.x-12,s.a.x,s.a.x+12,s.b.x-12,s.b.x,s.b.x+12])])].sort((x,y)=>x-y),Y=[...new Set([...coords.flatMap(p=>[p.y-12,p.y,p.y+12]),...boxes.flatMap(r=>[r.y,r.y+r.h]),...segments.flatMap(s=>[s.a.y-12,s.a.y,s.a.y+12,s.b.y-12,s.b.y,s.b.y+12])])].sort((x,y)=>x-y),width=X.length,index=p=>Y.indexOf(p.y)*width+X.indexOf(p.x),goals=new Map(ends.map(ps=>[index(ps.at(-1)),ps]));
     let bestPath=null,bestScore=null;const consider=ps=>{ps=clean(ps);if(!valid(ps))return;const score=advance(ps);if(better(score,bestScore)){bestPath=ps;bestScore={...score,priority:score.length};}};
     // Keep a safe incumbent if the bounded search reaches its work budget.
@@ -77,11 +84,11 @@
     return bestPath;
   }
   function route(aEnd,bEnd,state,ignoreWire=null,directOnly=false){
-    const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=state.nodes.map(n=>({id:n.id,x:n.x-ROUTE_CLEARANCE,y:n.y-ROUTE_CLEARANCE,w:size(n,state.definitions).w+2*ROUTE_CLEARANCE,h:size(n,state.definitions).h+2*ROUTE_CLEARANCE}));
+    const a=anchor(aEnd,state),b=anchor(bEnd,state),boxes=routeObstacles(state,aEnd,bEnd);
     const segments=state.wires.filter(w=>w.id!==ignoreWire).flatMap(w=>{const ps=points(w,state);return ps.slice(1).map((b,i)=>({a:ps[i],b}));});
     const overlap=segmentsOverlap;
     const clear=(p,q,owner=null)=>!segments.some(s=>overlap(p,q,s.a,s.b))&&!boxes.some(r=>r.id!==owner&&segmentHitsBox(p,q,r));
-    const leads=(end,p)=>{const usable=routePortExits(end,p,state,boxes,clear);if(usable.length||!end.node)return usable;
+    const leads=(end,p)=>{const usable=routePortExits(end,p,state,boxes,clear);if(usable.length>=4||!end.node)return usable;
       const n=state.nodes.find(n=>n.id===end.node),angle=(n.rotation||0)*Math.PI/180,sign=end.dir==='out'?1:-1,dx=Math.round(Math.cos(angle))*sign,dy=Math.round(Math.sin(angle))*sign;
       // Distinct angled exits keep dense fanout connected without shared strokes.
       for(let offset=1;offset<=256&&usable.length<4;offset++)for(const side of [-1,1]){const q={x:p.x+dx*ROUTE_CLEARANCE-dy*offset*side,y:p.y+dy*ROUTE_CLEARANCE+dx*offset*side};if(clear(p,q,end.node))usable.push([p,q]);}return usable;
@@ -114,7 +121,15 @@
     for(let visited=0;heap.length&&visited<20000;visited++){
       const current=pop(),{id,g}=current;if(g!==cost.get(id))continue;const x=id%width,y=Math.floor(id/width),p={x:X[x],y:Y[y]};
       if(goals.has(id)){const ps=[];let start=id;for(let k=id;k!==null;k=prev.get(k)){start=k;ps.push({x:X[k%width],y:Y[Math.floor(k/width)]});}const result=complete(origins.get(start),ps.reverse(),goals.get(id));if(result)return result;}
-      for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const next=ny*width+nx,q={x:X[nx],y:Y[ny]},ng=g+Math.abs(p.x-q.x)+Math.abs(p.y-q.y);if(ng<(cost.get(next)??Infinity)&&clear(p,q)){cost.set(next,ng);prev.set(next,id);push({id:next,g:ng,f:ng+estimate(q)});}}
+      for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){if(nx<0||nx>=X.length||ny<0||ny>=Y.length)continue;const next=ny*width+nx,q={x:X[nx],y:Y[ny]},ng=g+Math.abs(p.x-q.x)+Math.abs(p.y-q.y);if(ng<(cost.get(next)??Infinity)&&clear(p,q)&&!origins.get(id).slice(1).some((b,i,ps)=>segmentsOverlap(p,q,i?ps[i-1]:origins.get(id)[0],b))){cost.set(next,ng);prev.set(next,id);origins.set(next,origins.get(id));push({id:next,g:ng,f:ng+estimate(q)});}}
+    }
+    // Expand outward in bounded stages before allowing a shared wire segment.
+    const minX=Math.min(...tips.map(p=>p.x)),maxX=Math.max(...tips.map(p=>p.x)),minY=Math.min(...tips.map(p=>p.y)),maxY=Math.max(...tips.map(p=>p.y));let attempts=0;
+    for(const gap of [24,48,96,192,384,768,1536])for(const start of starts)for(const end of ends){
+      const a=start.at(-1),b=end.at(-1),candidates=[];
+      for(const y of [minY-gap,maxY+gap])candidates.push([a,{x:a.x,y},{x:b.x,y},b]);
+      for(const x of [minX-gap,maxX+gap]){candidates.push([a,{x,y:a.y},{x,y:b.y},b]);for(const y of [minY-gap,maxY+gap])candidates.push([a,{x,y:a.y},{x,y},{x:b.x,y},b],[a,{x:a.x,y},{x,y},{x,y:b.y},b]);}
+      for(const ps of candidates){if(++attempts>4096)return leastOverlapRoute(aEnd,bEnd,state,ignoreWire);if(ps.slice(1).every((q,i)=>clear(ps[i],q))){const result=complete(start,ps,end);if(result)return result;}}
     }
     return leastOverlapRoute(aEnd,bEnd,state,ignoreWire);
   }
@@ -433,5 +448,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
