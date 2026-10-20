@@ -35,3 +35,6 @@ VERIFIED：公开来源为 https://github.com/xiaoxuhui/logic-circuit ，固定�
 
 ## 0.3.0（2026-10-19）
 来源abdebbd607d83072fc0d44d5a93a2d61ed21d2d0，v0.3.0标签、184项单测和36套公开浏览器回归通过，来源CI39269689531成功。大厅生产26a91af6eb7444cd4a294432365a2c371d07d3c1的86项检查及CI39269779845成功。目录24/contentCode10已发布，24份签名目录及25个累计资源匿名核验通过；ZIP asset656523461、SHA256 128a47f78490a52ca9c1a4a56699ac7243e8b556cad304132a25dda6cdb19faa。来源与大厅发行记录见0.3.0测试与发布报告及大厅doc/evidence/n23/sequence24。
+
+## 0.3.1（2026-10-20）
+源码409315c644a2b804ee145cf5d9a323dcb189f725，v0.3.1已推送；268项核心/分发测试、50套浏览器回归及CI39405817605成功。大厅生产e2ab06085949f94ea6a2671cce3971361caafea9，86项及CI39405925138成功，两轮8文件完全一致。0.3.1/contentCode11/目录25已发布，12文件包含离线三维引擎和许可记录，原存储合同不变。目录asset658980575、SHA256 ce97ad7a5b7ca5c13e3e78b41b1d55d866c55c8c04e3d3c8dce6dc5878d531c0；ZIP asset658976717、988554字节、SHA256 cd2bd6a07a53bf0c7ec937bbb05faaab09b9265d91adc656a98a12c16f93f692。25份签名目录及26个累计资源匿名校验通过。大厅立即检查→逻辑工坊→更新，无需新APK。完整公开证据见game-hub/doc/evidence/n23/sequence25。
