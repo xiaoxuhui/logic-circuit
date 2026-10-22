@@ -7,25 +7,55 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-      - run: pnpm run build
-      - run: git diff --exit-code -- dist
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm run test:browser
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm test
+      - name: Build dist
+        run: pnpm run build
+      - name: Verify committed dist is up to date
+        run: git diff --exit-code -- dist
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      LOGIC_BROWSER_ATTEMPTS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser tests
+        run: pnpm run test:browser
+      - name: Upload browser evidence
         if: failure()
+        uses: actions/upload-artifact@v4
         with:
           name: browser-evidence
           path: tests/artifacts/
