@@ -3,19 +3,27 @@
   const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore,typeof module==='object'&&module.exports?require('./expanded.js'):root.LogicExpanded,typeof module==='object'&&module.exports?require('./minecraft-redstone.js'):root.LogicRedstone);
   if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicMinecraft=api;
   if(typeof importScripts==='function'){
-    let current,sim,running=false,directRunning=false,directJob=null,lastTime=0,elapsed=0;
+    let current,sim,running=false,directRunning=false,directJob=null,directTimer=null,lastTime=0,elapsed=0;
     const now=()=>typeof performance==='object'?performance.now():Date.now(),resetClock=()=>{lastTime=now();elapsed=0;};
     const send=(force=false,warning='')=>{if(!sim)return;const updates=api.updates(sim.drain());if(updates.length||force)root.postMessage({updates,tick:sim.tick,pending:sim.pending.size,directRunning,settling:!!directJob,settleWarning:warning});};
+    function scheduleDirect(){
+      if(directTimer!==null||!directJob||!sim?.pending.size)return;
+      directTimer=setTimeout(()=>{directTimer=null;if(directJob)directChunk();},0);
+    }
     function directChunk(){
       if(!directJob||!sim)return;const started=now();
-      for(let n=0;n<32&&sim.pending.size;n++){
-        const state=sim.devices.map(b=>b.on?'1':'0').join('');
-        if(directJob.seen.has(state)||directJob.rounds>=4096){directJob=null;directRunning=false;send(true,'直接计算未稳定：可能存在反馈振荡，已停止');return;}
-        if(directJob.seen.size<64)directJob.seen.add(state);
+      for(let n=0;n<31&&sim.pending.size;n++){
+        if(!directRunning){
+          const state=sim.devices.map(b=>b.on?'1':'0').join('');
+          if(directJob.seen.has(state)||directJob.rounds>=4096){directJob=null;send(true,'直接计算未稳定：可能存在反馈振荡，已停止');return;}
+          if(directJob.seen.size<64)directJob.seen.add(state);
+        }
         sim.resolvePending();directJob.rounds++;
         if(now()-started>=12)break;
       }
-      if(!sim.pending.size){directJob=null;send(true);}
+      if(!sim.pending.size)directJob=null;
+      if(directRunning||!directJob)send(true);
+      scheduleDirect();
     }
     function startDirect(){if(!sim)return;running=false;resetClock();directJob={rounds:0,seen:new Set()};send(true);directChunk();}
     function advanceClock(){const time=now();elapsed+=Math.max(0,time-lastTime);lastTime=time;if(directJob){elapsed=0;directChunk();return;}if(!sim||!running||!sim.pending.size){elapsed=0;return;}const steps=Math.min(40,Math.floor(elapsed/api.GAME_TICK_MS));if(!steps)return;elapsed-=steps*api.GAME_TICK_MS;for(let i=0;i<steps&&sim.pending.size;i++)sim.step().forEach(b=>sim.changes.add(b));if(!sim.pending.size)elapsed=0;send(true);}
