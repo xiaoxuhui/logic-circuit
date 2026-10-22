@@ -261,7 +261,7 @@
     currentOwner=null;
     const tileBlocked=p=>p.y<=3&&(reserved.get(Math.floor(p.x/16)+','+Math.floor(p.z/16))||[]).some(rect=>p.x>=rect.minX&&p.x<=rect.maxX&&p.z>=rect.minZ&&p.z<=rect.maxZ);
     // Reserve an arrival cell so earlier wires cannot surround later inputs.
-    const arrivalOffsets=[-1,0,1].flatMap(x=>[-1,0,1].map(z=>({x,z}))),arrivals=new Map();for(const [net,group] of terminals)for(const t of group.targets){const d=t.entryDirection;if(!d)continue;const center={x:t.x-d.x,y:t.y,z:t.z-d.z};for(const offset of arrivalOffsets){const key=(center.x+offset.x)+','+(center.z+offset.z),list=arrivals.get(key)||[];list.push({net,y:t.y,clearance:basis==='or-not'?Infinity:2});arrivals.set(key,list);}}
+    const arrivalOffsets=[-1,0,1].flatMap(x=>[-1,0,1].map(z=>({x,z}))),arrivals=new Map();for(const [net,group] of terminals)for(const t of group.targets){const d=t.entryDirection;if(!d)continue;const center={x:t.x-d.x,y:t.y,z:t.z-d.z};for(const offset of arrivalOffsets){const key=(center.x+offset.x)+','+(center.z+offset.z),list=arrivals.get(key)||[];list.push({net,y:t.y,clearance:2});arrivals.set(key,list);}}
     const leverOwners=new Set(levers.map(l=>world.cells.get(l.key).owner));
     for(const [net,group] of terminals)for(const t of group.sources){if(pitch<16&&!leverOwners.has(t.owner))continue;const d=t.exitDirection;if(!d)continue;for(const offset of arrivalOffsets){const key=(t.x+d.x+offset.x)+','+(t.z+d.z+offset.z),list=arrivals.get(key)||[];list.push({net,y:t.y,clearance:1});arrivals.set(key,list);}}
     const portHeads=new Set([...terminals.values()].flatMap(g=>[...g.sources,...g.targets].map(p=>R.key({...p,y:p.y+1}))));
@@ -299,12 +299,17 @@
     }
     function routeSingle(a,b,net){const A={x:a.x,y:a.y,z:a.z},B={x:b.x,y:b.y,z:b.z};if(A.y===B.y){const direct=[[A,{...A,x:B.x},B],[A,{...A,z:B.z},B]].map(interpolate);for(const ps of direct)if(pathOK(ps,net))return ps;for(const ps of direct)for(const bridge of bridgePaths(ps,world,net))if(pathOK(bridge,net))return bridge;for(const offset of [2,-2,4,-4,8,-8]){const ps=interpolate([A,{...A,x:A.x+offset},{...B,x:A.x+offset},B]);if(pathOK(ps,net))return ps;}}
       const layered=denseBus&&layeredRoute(a,b,net);if(layered)return layered;
-      // The world is immutable during this search; never reuse these caches after laying a wire.
-      const passable=new Map(),ceilings=new Map(),canPass=(p,k)=>{if(!passable.has(k))passable.set(k,legal(p,net));return passable.get(k);},ceiling=p=>{const k=R.key(p);if(!ceilings.has(k))ceilings.set(k,!!world.at({...p,y:p.y+1}));return ceilings.get(k);};
-      const heap=[],best=new Map(),distance=p=>Math.abs(p.x-B.x)+Math.abs(p.z-B.z)+Math.abs(p.y-B.y),push=r=>{let i=heap.length;heap.push(r);while(i){const j=(i-1)>>1;if(heap[j].f<=r.f)break;heap[i]=heap[j];i=j;}heap[i]=r;},pop=()=>{const result=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let j=i*2+1;if(j+1<heap.length&&heap[j+1].f<heap[j].f)j++;if(last.f<=heap[j].f)break;heap[i]=heap[j];i=j;}heap[i]=last;}return result;};
-      const minX=Math.min(A.x,B.x)-16,maxX=Math.max(A.x,B.x)+16,minZ=Math.min(A.z,B.z)-16,maxZ=Math.max(A.z,B.z)+16;push({p:A,g:0,f:distance(A),prev:null});best.set(R.key(A),0);
-      for(let count=0;heap.length&&count<60000;count++){const r=pop();if(r.g!==best.get(R.key(r.p)))continue;if(R.key(r.p)===R.key(B)){const ps=[];for(let n=r;n;n=n.prev)ps.push(n.p);ps.reverse();if(pathOK(ps,net))return ps;continue;}
-        for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>(denseBus?Math.max(A.y,B.y,8)+16:8)||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ)continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity)||!canPass(p,k))continue;if(dy>0&&ceiling(r.p)||dy<0&&ceiling(p))continue;let overlaps=false;for(let ancestor=r;ancestor;ancestor=ancestor.prev)if(ancestor.p.x===p.x&&ancestor.p.z===p.z){overlaps=true;break;}if(overlaps)continue;best.set(k,g);push({p,g,f:g+distance(p)*(denseBus?1.7:1),prev:r});}
+      // A small circuit can need an upper crossing too; keep each retry bounded.
+      const initialHeight=denseBus?Math.max(A.y,B.y,8)+16:8;
+      for(const heightLimit of [initialHeight,...[16,32,48].filter(h=>h>initialHeight)]){
+        if(!denseBus&&heightLimit===16){const upper=layeredRoute(a,b,net);if(upper)return upper;}
+        // The world is immutable during this search; never reuse these caches after laying a wire.
+        const passable=new Map(),ceilings=new Map(),canPass=(p,k)=>{if(!passable.has(k))passable.set(k,legal(p,net));return passable.get(k);},ceiling=p=>{const k=R.key(p);if(!ceilings.has(k))ceilings.set(k,!!world.at({...p,y:p.y+1}));return ceilings.get(k);};
+        const heap=[],best=new Map(),distance=p=>Math.abs(p.x-B.x)+Math.abs(p.z-B.z)+Math.abs(p.y-B.y),push=r=>{let i=heap.length;heap.push(r);while(i){const j=(i-1)>>1;if(heap[j].f<=r.f)break;heap[i]=heap[j];i=j;}heap[i]=r;},pop=()=>{const result=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let j=i*2+1;if(j+1<heap.length&&heap[j+1].f<heap[j].f)j++;if(last.f<=heap[j].f)break;heap[i]=heap[j];i=j;}heap[i]=last;}return result;};
+        const margin=heightLimit===initialHeight?16:heightLimit+4,minX=Math.min(A.x,B.x)-margin,maxX=Math.max(A.x,B.x)+margin,minZ=Math.min(A.z,B.z)-margin,maxZ=Math.max(A.z,B.z)+margin;push({p:A,g:0,f:distance(A),prev:null});best.set(R.key(A),0);
+        for(let count=0;heap.length&&count<60000;count++){const r=pop();if(r.g!==best.get(R.key(r.p)))continue;if(R.key(r.p)===R.key(B)){const ps=[];for(let n=r;n;n=n.prev)ps.push(n.p);ps.reverse();if(pathOK(ps,net))return ps;continue;}
+          for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>heightLimit||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ)continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity)||!canPass(p,k))continue;if(dy>0&&ceiling(r.p)||dy<0&&ceiling(p))continue;let overlaps=false;for(let ancestor=r;ancestor;ancestor=ancestor.prev)if(ancestor.p.x===p.x&&ancestor.p.z===p.z){overlaps=true;break;}if(overlaps)continue;best.set(k,g);push({p,g,f:g+distance(p)*(denseBus||heightLimit>initialHeight?1.7:1),prev:r});}
+        }
       }return null;
     }
     let rebaseRoutes=false;
