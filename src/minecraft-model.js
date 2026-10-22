@@ -72,9 +72,16 @@
     // Removing a redundant corridor can leave a short spur beside its junction.
     const degree=links.map(list=>list.filter(id=>!removed.has(id)).length),queue=cells.flatMap((b,i)=>mutable[i]&&!devices[i]&&degree[i]<=1?[i]:[]);
     for(let i=0;i<queue.length;i++){const id=queue[i];if(removed.has(id)||!mutable[id]||devices[id]||degree[id]>1)continue;removed.add(id);for(const next of links[id])if(!removed.has(next)&&--degree[next]<=1)queue.push(next);}
-    for(const id of removed){const b=cells[id];world.cells.delete(R.key(b));const below=R.add(b,{x:0,y:-1,z:0}),base=world.at(below),under=world.at(R.add(below,{x:0,y:-1,z:0}));
+    for(const id of removed)world.cells.delete(R.key(cells[id]));
+    for(const id of removed){const b=cells[id],below=R.add(b,{x:0,y:-1,z:0}),base=world.at(below),under=world.at(R.add(below,{x:0,y:-1,z:0}));
       const attached=around.some(d=>{const q=world.at(R.add(below,d));return q?.kind==='torch'&&R.key(q.attached||R.add(q,{x:0,y:-1,z:0}))===R.key(below);});
-      if(base?.kind==='support'&&!attached&&!['dust','repeater','torch','lever','lamp'].includes(under?.kind))world.cells.delete(R.key(below));
+      if(base?.kind!=='support'||attached||['repeater','torch','lever','lamp'].includes(under?.kind))continue;
+      if(under?.kind==='dust'){
+        // Keep a ceiling only when it actually prevents a vertical dust link.
+        if(around.some(d=>['torch','repeater','lever','lamp'].includes(world.at(R.add(below,d))?.kind)))continue;
+        const affected=[under,...R.directions.map(d=>world.at(R.add(below,d))).filter(q=>q?.kind==='dust')],before=affected.map(q=>world.dustNeighbors(q).map(R.key).sort().join('|'));
+        world.cells.delete(R.key(below));if(affected.some((q,i)=>world.dustNeighbors(q).map(R.key).sort().join('|')!==before[i]))world.put(base);
+      }else world.cells.delete(R.key(below));
     }
     return removed.size;
   }
