@@ -59,3 +59,5 @@ dialog.minecraft-mode{position:fixed;inset:0;width:100vw;height:100dvh;max-width
 
 .minecraft-ui-toggle{position:absolute;top:12px;right:12px;z-index:10;min-height:36px;padding:8px 13px;white-space:nowrap;background:#173126;border:1px solid #6c936d;color:#eff9e6}.minecraft-header{padding-right:132px}.minecraft-ui-hidden .minecraft-header,.minecraft-ui-hidden .minecraft-info,.minecraft-ui-hidden .minecraft-legend,.minecraft-ui-hidden .minecraft-flight{display:none}
 @media(max-width:700px){.minecraft-header{padding-right:12px}.minecraft-header>div{padding-right:112px}.minecraft-ui-toggle{top:9px;right:10px;font-size:11px}}
+
+#minecraft-materials{display:flex;flex-wrap:wrap;gap:3px 12px;max-width:540px;color:#c7d6c6;font-size:11px;line-height:1.5}#minecraft-materials span{white-space:nowrap}@media(max-width:700px){#minecraft-materials{max-width:260px;font-size:9px}}
