@@ -179,7 +179,9 @@
     function device(kind,x,y,z,net,on,extra={}){if(kind!=='torch')support(x,y-1,z);return put(kind,x,y,z,{net,on,...extra});}
     function terminal(net,p,source=false){if(source&&forced.has(net))return;const group=terminals.get(net)||{sources:[],targets:[]};if(!terminals.has(net))terminals.set(net,group);group[source?'sources':'targets'].push(p);}
     const fanout=new Map();for(const p of graph.primitives)for(const net of new Set(p.inputs))fanout.set(net,(fanout.get(net)||0)+1);
-    const columns=basis==='or-not'?16:64,pitch=basis==='or-not'||[...fanout.values()].some(n=>n>2)?16:12,internalRecords=[...new Set([...graph.primitives.filter(p=>p.node.type==='delay').map(p=>p.record),...graph.layoutNands,...graph.records.filter(record=>!record.optimized&&!['input','output'].includes(record.type))])],firstGate=graph.primitives.find(p=>p.record===internalRecords[0]),recordSlots=new Map(internalRecords.map((record,i)=>[record,i])),maxBits=graph.records.reduce((max,record)=>Math.max(max,record.bits),1),bandHeight=Math.max(basis==='or-not'?12:7,maxBits*3+4);
+    // Wide, multi-row circuits need room for protected port ramps and upper wire layers.
+    const denseBus=graph.layoutNands.length>=64&&graph.records.some(r=>r.bits>1);
+    const columns=basis==='or-not'?16:64,pitch=denseBus?32:basis==='or-not'||[...fanout.values()].some(n=>n>2)?16:12,internalRecords=[...new Set([...graph.primitives.filter(p=>p.node.type==='delay').map(p=>p.record),...graph.layoutNands,...graph.records.filter(record=>!record.optimized&&!['input','output'].includes(record.type))])],firstGate=graph.primitives.find(p=>p.record===internalRecords[0]),recordSlots=new Map(internalRecords.map((record,i)=>[record,i])),maxBits=graph.records.reduce((max,record)=>Math.max(max,record.bits),1),bandHeight=Math.max(basis==='or-not'?12:7,maxBits*3+4);
     function reserve(x,z,complex,reversed=false){let minX=complex==='delay'?0:-1,maxX=complex==='nand'?6:complex==='delay'?1:11;if(reversed)[minX,maxX]=[10-maxX,10-minX];const rect={minX:x+minX,maxX:x+maxX,minZ:z+(complex==='nand'?2:complex&&complex!=='delay'?-1:3),maxZ:z+(complex==='nand'?6:complex&&complex!=='delay'?9:5)};maxReservedZ=Math.max(maxReservedZ,rect.maxZ);for(let bx=Math.floor(rect.minX/16);bx<=Math.floor(rect.maxX/16);bx++)for(let bz=Math.floor(rect.minZ/16);bz<=Math.floor(rect.maxZ/16);bz++){const k=bx+','+bz;if(!reserved.has(k))reserved.set(k,[]);reserved.get(k).push(rect);}}
     function tile(p){if(!recordSlots.has(p.record))recordSlots.set(p.record,graph.records.length+serial++);const i=recordSlots.get(p.record),band=Math.floor(i/columns),col=band%2?columns-1-i%columns:i%columns,x=4+col*pitch,z=4+band*bandHeight+(maxBits-1-p.bit)*3;reserve(x,z,p.node.type==='delay'?'delay':'nand',!!(band%2));return {x,z,reversed:!!(band%2)};}
     const lastIndex=internalRecords.length-1,lastBand=lastIndex<0?0:Math.floor(lastIndex/columns),lastCol=lastBand%2?columns-1-lastIndex%columns:lastIndex%columns,lastX=internalRecords.length?4+lastCol*pitch:0,engineWidth=internalRecords.length?4+(Math.min(internalRecords.length,columns)-1)*pitch+(internalRecords.some(r=>r.type!=='delay')?8:2):0,boundaryPlans=new Map(),interfaceRotations=new Set(graph.records.filter(record=>['input','output'].includes(record.type)).map(record=>record.source.rotation)),interfaceFacing=interfaceRotations.size===1?[...interfaceRotations][0]/90:0,engineDepth=internalRecords.length?12+lastBand*bandHeight+(maxBits-1)*3:0;
@@ -233,19 +235,43 @@
     // Keep routed dust and its support columns away from every lever, at any height.
     // Existing lever-owned output stubs remain available as the departure point.
     const leverClearance=new Set();for(const lever of levers){const body=world.cells.get(lever.key);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)leverClearance.add((body.x+dx)+','+(body.z+dz));}
-    function legal(p,net){const old=world.at(p);if(old)return old.kind==='dust'&&old.net===net&&!old.routingLocked;if(leverClearance.has(p.x+','+p.z))return false;if((arrivals.get(p.x+','+p.z)||[]).some(a=>a.net!==net&&Math.abs(a.y-p.y)<=(a.clearance??2)))return false;if(tileBlocked(p))return false;const underKey=R.key({...p,y:p.y-1});if(portHeads.has(underKey))return false;const below=world.at({...p,y:p.y-1});if(below?.kind==='lamp'||below&&!R.supports(below))return false;
-      for(const d of R.directions)for(let dy=-1;dy<=1;dy++){const q=world.at({x:p.x+d.x,y:p.y+dy,z:p.z+d.z});if(q?.routingLocked&&d.x*q.approach.z-d.z*q.approach.x)return false;if(q&&['dust','repeater','torch','lever','lamp'].includes(q.kind)&&q.net!==net)return false;}
+    const portEscapes=new Map(),protectedEscapes=new Set();
+    function legal(p,net){const old=world.at(p);if(old)return old.kind==='dust'&&old.net===net&&!old.routingLocked&&!protectedEscapes.has(old);if(leverClearance.has(p.x+','+p.z))return false;if((arrivals.get(p.x+','+p.z)||[]).some(a=>a.net!==net&&Math.abs(a.y-p.y)<=(a.clearance??2)))return false;if(tileBlocked(p))return false;const underKey=R.key({...p,y:p.y-1});if(portHeads.has(underKey))return false;const below=world.at({...p,y:p.y-1});if(below?.kind==='lamp'||below&&!R.supports(below))return false;
+      for(const d of R.directions)for(let dy=-1;dy<=1;dy++){const q=world.at({x:p.x+d.x,y:p.y+dy,z:p.z+d.z});if(protectedEscapes.has(q))return false;if(q?.routingLocked&&d.x*q.approach.z-d.z*q.approach.x)return false;if(q&&['dust','repeater','torch','lever','lamp'].includes(q.kind)&&q.net!==net)return false;}
       const under=world.at({...p,y:p.y-2});if(under?.kind==='torch'||under?.kind==='dust'&&world.dustNeighbors(under).some(q=>q.y>under.y))return false;return true;
     }
     const interpolate=points=>{const out=[points[0]];for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],length=Math.max(Math.abs(b.x-a.x),Math.abs(b.y-a.y),Math.abs(b.z-a.z));for(let n=1;n<=length;n++)out.push({x:a.x+(b.x-a.x)*n/length,y:a.y+(b.y-a.y)*n/length,z:a.z+(b.z-a.z)*n/length});}return out;};
     function pathOK(path,net){const planned=new Set(path.map(R.key)),supports=new Set(path.map(p=>R.key({...p,y:p.y-1}))),headBlocked=p=>world.at(p)||planned.has(R.key(p))||supports.has(R.key(p));return path.every((p,i)=>{const prev=path[i-1];if(prev&&(Math.abs(p.y-prev.y)>1||p.y>prev.y&&headBlocked({...prev,y:prev.y+1})||p.y<prev.y&&headBlocked({...p,y:p.y+1})))return false;return legal(p,net)&&!planned.has(R.key({...p,y:p.y-1}));});}
+    function risingPath(p,d,sign,height){
+      const out=[{x:p.x,y:p.y,z:p.z}];
+      for(let i=1;i<=height-p.y;i++){
+        let q=out.at(-1);out.push({x:q.x+sign*d.x,y:q.y+1,z:q.z+sign*d.z});
+        // Three level cells provide a place to restore strength on a long ascent.
+        if(i%4===0)for(let j=0;j<2;j++){q=out.at(-1);out.push({x:q.x+sign*d.x,y:q.y,z:q.z+sign*d.z});}
+      }
+      return out;
+    }
+    function layeredRoute(a,b,net){
+      const choices=(preferred,dx,dz)=>preferred?[preferred]:R.directions.slice().sort((p,q)=>(q.x*dx+q.z*dz)-(p.x*dx+p.z*dz));
+      const from=choices(a.exitDirection,b.x-a.x,b.z-a.z),into=choices(b.entryDirection,b.x-a.x,b.z-a.z);
+      for(const height of [5,7,9,11,13,17,25,33]){if(height<=Math.max(a.y,b.y))continue;
+        for(const da of from){const left=risingPath(a,da,1,height);if(!pathOK(left,net))continue;
+          for(const db of into){const right=risingPath(b,db,-1,height).reverse();if(!pathOK(right,net))continue;const A=left.at(-1),B=right[0],corners=[[A,{...A,x:B.x},B],[A,{...A,z:B.z},B]];
+            for(const z of [Math.min(A.z,B.z)-2,Math.max(A.z,B.z)+2,Math.min(A.z,B.z)-6,Math.max(A.z,B.z)+6])corners.push([A,{...A,z},{...B,z},B]);
+            for(const x of [Math.min(A.x,B.x)-2,Math.max(A.x,B.x)+2])corners.push([A,{...A,x},{...B,x},B]);
+            for(const cornersPath of corners){const ps=[...left,...interpolate(cornersPath).slice(1),...right.slice(1)];if(pathOK(ps,net))return ps;}
+          }
+        }
+      }return null;
+    }
     function routeSingle(a,b,net){const A={x:a.x,y:a.y,z:a.z},B={x:b.x,y:b.y,z:b.z};if(A.y===B.y){const direct=[[A,{...A,x:B.x},B],[A,{...A,z:B.z},B]].map(interpolate);for(const ps of direct)if(pathOK(ps,net))return ps;for(const ps of direct)for(const bridge of bridgePaths(ps,world,net))if(pathOK(bridge,net))return bridge;for(const offset of [2,-2,4,-4,8,-8]){const ps=interpolate([A,{...A,x:A.x+offset},{...B,x:A.x+offset},B]);if(pathOK(ps,net))return ps;}}
+      const layered=denseBus&&layeredRoute(a,b,net);if(layered)return layered;
       // The world is immutable during this search; never reuse these caches after laying a wire.
       const passable=new Map(),ceilings=new Map(),canPass=(p,k)=>{if(!passable.has(k))passable.set(k,legal(p,net));return passable.get(k);},ceiling=p=>{const k=R.key(p);if(!ceilings.has(k))ceilings.set(k,!!world.at({...p,y:p.y+1}));return ceilings.get(k);};
       const heap=[],best=new Map(),distance=p=>Math.abs(p.x-B.x)+Math.abs(p.z-B.z)+Math.abs(p.y-B.y),push=r=>{let i=heap.length;heap.push(r);while(i){const j=(i-1)>>1;if(heap[j].f<=r.f)break;heap[i]=heap[j];i=j;}heap[i]=r;},pop=()=>{const result=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let j=i*2+1;if(j+1<heap.length&&heap[j+1].f<heap[j].f)j++;if(last.f<=heap[j].f)break;heap[i]=heap[j];i=j;}heap[i]=last;}return result;};
       const minX=Math.min(A.x,B.x)-16,maxX=Math.max(A.x,B.x)+16,minZ=Math.min(A.z,B.z)-16,maxZ=Math.max(A.z,B.z)+16;push({p:A,g:0,f:distance(A),prev:null});best.set(R.key(A),0);
       for(let count=0;heap.length&&count<60000;count++){const r=pop();if(r.g!==best.get(R.key(r.p)))continue;if(R.key(r.p)===R.key(B)){const ps=[];for(let n=r;n;n=n.prev)ps.push(n.p);ps.reverse();if(pathOK(ps,net))return ps;continue;}
-        for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>8||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ)continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity)||!canPass(p,k))continue;if(dy>0&&ceiling(r.p)||dy<0&&ceiling(p))continue;let overlaps=false;for(let ancestor=r;ancestor;ancestor=ancestor.prev)if(ancestor.p.x===p.x&&ancestor.p.z===p.z){overlaps=true;break;}if(overlaps)continue;best.set(k,g);push({p,g,f:g+distance(p),prev:r});}
+        for(const d of R.directions)for(const dy of [0,1,-1]){const p={x:r.p.x+d.x,y:r.p.y+dy,z:r.p.z+d.z};if(p.y<1||p.y>(denseBus?Math.max(A.y,B.y,8)+16:8)||p.x<minX||p.x>maxX||p.z<minZ||p.z>maxZ)continue;const g=r.g+1+Math.abs(dy)*2,k=R.key(p);if(g>=(best.get(k)??Infinity)||!canPass(p,k))continue;if(dy>0&&ceiling(r.p)||dy<0&&ceiling(p))continue;let overlaps=false;for(let ancestor=r;ancestor;ancestor=ancestor.prev)if(ancestor.p.x===p.x&&ancestor.p.z===p.z){overlaps=true;break;}if(overlaps)continue;best.set(k,g);push({p,g,f:g+distance(p)*(denseBus?1.7:1),prev:r});}
       }return null;
     }
     let rebaseRoutes=false;
@@ -256,8 +282,33 @@
       queue.sort((p,q)=>(Math.abs(p.x-b.x)+Math.abs(p.y-b.y)+Math.abs(p.z-b.z))-(Math.abs(q.x-b.x)+Math.abs(q.y-b.y)+Math.abs(q.z-b.z)));
       for(const start of queue.slice(0,16)){if(start===root)continue;const ps=routeSingle(start,b,net);if(ps){rebaseRoutes=true;return ps;}}return null;
     }
+    if(denseBus){
+      // Establish every port's escape before any long wire can surround it.
+      for(const [net,group] of terminals)for(const side of ['sources','targets'])for(const old of group[side]){
+        const d=side==='sources'?old.exitDirection:old.entryDirection;if(!d)continue;
+        const sign=side==='sources'?1:-1,ramp=risingPath(old,d,sign,5);if(!pathOK(ramp,net))continue;
+        currentOwner=old.owner;
+        for(const p of ramp)support(p.x,p.y-1,p.z);
+        for(const p of ramp)dust(p.x,p.y,p.z,net,!!netSignal.get(net));
+        portEscapes.set(old,{pad:world.at(ramp.at(-1)),points:ramp});
+        // A later branch must not bypass a ramp's repeater landing from the side.
+        for(const p of ramp.slice(0,-1))protectedEscapes.add(world.at(p));
+      }
+      currentOwner=null;arrivals.clear();portHeads.clear();
+      for(const [net,group] of terminals)for(const side of ['sources','targets'])for(const original of group[side]){
+        const t=portEscapes.get(original)?.pad||original;portHeads.add(R.key({...t,y:t.y+1}));
+        const d=side==='sources'?original.exitDirection:original.entryDirection;if(!d)continue;
+        const sign=side==='sources'?1:-1,center={x:t.x+sign*d.x,y:t.y,z:t.z+sign*d.z};
+        for(const offset of arrivalOffsets){const k=(center.x+offset.x)+','+(center.z+offset.z),list=arrivals.get(k)||[];list.push({net,y:t.y,clearance:2});arrivals.set(k,list);}
+      }
+    }
+    function routePorts(start,end,net){
+      const a=portEscapes.get(start),b=portEscapes.get(end),middle=route(a?.pad||start,b?.pad||end,net);
+      // Include the ramps when budgeting signal strength and inserting repeaters.
+      return middle?[...(a?.points||[start]).slice(0,-1),...middle,...(b?.points||[end]).slice().reverse().slice(1)]:null;
+    }
     progress(35,'正在铺设逐位红石线路与支撑…');const paths=[];let done=0;
-    for(const [net,group] of [...terminals].sort((a,b)=>(b[1].sources[0]?.x||0)-(a[1].sources[0]?.x||0)||(a[1].sources[0]?.z||0)-(b[1].sources[0]?.z||0))){if(group.sources.length){const start=group.sources[0];for(const end of [...group.sources.slice(1),...group.targets].sort((a,b)=>(Math.abs(b.x-start.x)+Math.abs(b.z-start.z))-(Math.abs(a.x-start.x)+Math.abs(a.z-start.z)))){const ps=route(start,end,net);if(!ps){unrouted.push({from:R.key(start),to:R.key(end),net});continue;}for(const p of ps)support(p.x,p.y-1,p.z);for(const p of ps)dust(p.x,p.y,p.z,net,netSignal.get(net));paths.push({net,points:ps,buffer:group.sources.length===1,capacity:start.capacity||12,tail:end.tail||0});}}
+    for(const [net,group] of [...terminals].sort((a,b)=>(b[1].sources[0]?.x||0)-(a[1].sources[0]?.x||0)||(a[1].sources[0]?.z||0)-(b[1].sources[0]?.z||0))){if(group.sources.length){const start=group.sources[0];for(const end of [...group.sources.slice(1),...group.targets].sort((a,b)=>(Math.abs(b.x-start.x)+Math.abs(b.z-start.z))-(Math.abs(a.x-start.x)+Math.abs(a.z-start.z)))){const ps=routePorts(start,end,net);if(!ps){unrouted.push({from:R.key(start),to:R.key(end),net});continue;}for(const p of ps)support(p.x,p.y-1,p.z);for(const p of ps)dust(p.x,p.y,p.z,net,netSignal.get(net));paths.push({net,points:ps,buffer:group.sources.length===1,capacity:start.capacity||12,tail:end.tail||0});}}
       if(++done%200===0)progress(35+Math.round(done/terminals.size*40),'正在连接单比特网络 '+done+' / '+terminals.size);
     }
     function sourceCapacity(old,start){
