@@ -53,6 +53,7 @@
       }
       this.power=levels;
     }
+    resolvePending(){if(!this.pending.size)return false;const events=[...this.pending];this.pending.clear();for(const [b,event] of events){b.on=event.on;this.changes.add(b);}this.refresh();return true;}
     step(){this.tick++;let changed=false;for(const [b,event] of this.pending)if(event.at<=this.tick){this.pending.delete(b);b.on=event.on;this.changes.add(b);changed=true;}if(changed)this.refresh();return this.drain();}
     toggle(p){const b=typeof p==='string'?this.world.cells.get(p):this.world.at(p);if(b?.kind!=='lever')return false;b.on=!b.on;this.changes.add(b);this.refresh();return true;}
     drain(){const changes=[...this.changes];this.changes.clear();return changes;}
