@@ -3,32 +3,44 @@
   const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore,typeof module==='object'&&module.exports?require('./expanded.js'):root.LogicExpanded,typeof module==='object'&&module.exports?require('./minecraft-redstone.js'):root.LogicRedstone);
   if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicMinecraft=api;
   if(typeof importScripts==='function'){
-    let current,sim,running=false,directRunning=false,directJob=null,directTimer=null,lastTime=0,elapsed=0;
+    let current,sim,running=false,directRunning=false,directJob=null,directTimer=null,directEpoch=0,lastTime=0,elapsed=0;
     const now=()=>typeof performance==='object'?performance.now():Date.now(),resetClock=()=>{lastTime=now();elapsed=0;};
     const send=(force=false,warning='')=>{if(!sim)return;const updates=api.updates(sim.drain());if(updates.length||force)root.postMessage({updates,tick:sim.tick,pending:sim.pending.size,directRunning,settling:!!directJob,settleWarning:warning});};
-    function scheduleDirect(){
+    function cancelDirect(){directEpoch++;if(directTimer!==null){clearTimeout(directTimer);directTimer=null;}directJob=null;}
+    function leaveDirect(){cancelDirect();directRunning=false;if(sim?.transparentRepeaters)sim.setContinuous(false);}
+    function scheduleSingle(){
       if(directTimer!==null||!directJob||!sim?.pending.size)return;
-      directTimer=setTimeout(()=>{directTimer=null;if(directJob)directChunk();},0);
+      const epoch=directEpoch;directTimer=setTimeout(()=>{directTimer=null;if(epoch===directEpoch&&directJob)directChunk();},0);
     }
     function directChunk(){
       if(!directJob||!sim)return;const started=now();
       for(let n=0;n<31&&sim.pending.size;n++){
-        if(!directRunning){
-          const state=sim.devices.map(b=>b.on?'1':'0').join('');
-          if(directJob.seen.has(state)||directJob.rounds>=4096){directJob=null;send(true,'直接计算未稳定：可能存在反馈振荡，已停止');return;}
-          if(directJob.seen.size<64)directJob.seen.add(state);
-        }
+        const state=sim.devices.map(b=>b.on?'1':'0').join('');
+        if(directJob.seen.has(state)||directJob.rounds>=4096){directJob=null;send(true,'直接计算未稳定：可能存在反馈振荡，已停止');return;}
+        if(directJob.seen.size<64)directJob.seen.add(state);
         sim.resolvePending();directJob.rounds++;
         if(now()-started>=12)break;
       }
-      if(!sim.pending.size)directJob=null;
-      if(directRunning||!directJob)send(true);
-      scheduleDirect();
+      if(!sim.pending.size){directJob=null;send(true);}scheduleSingle();
     }
-    function startDirect(){if(!sim)return;running=false;resetClock();directJob={rounds:0,seen:new Set()};send(true);directChunk();}
-    function advanceClock(){const time=now();elapsed+=Math.max(0,time-lastTime);lastTime=time;if(directJob){elapsed=0;directChunk();return;}if(!sim||!running||!sim.pending.size){elapsed=0;return;}const steps=Math.min(40,Math.floor(elapsed/api.GAME_TICK_MS));if(!steps)return;elapsed-=steps*api.GAME_TICK_MS;for(let i=0;i<steps&&sim.pending.size;i++)sim.step().forEach(b=>sim.changes.add(b));if(!sim.pending.size)elapsed=0;send(true);}
-    root.onmessage=e=>{try{const data=e.data;if(data.type==='toggle'){advanceClock();resetClock();if(sim?.toggle(data.key)){if(directRunning||directJob)startDirect();else send();}return;}if(data.type==='direct'){directRunning=false;startDirect();return;}if(data.type==='direct-running'){directRunning=!!data.value;if(directRunning)startDirect();else{directJob=null;resetClock();send(true);}return;}if(data.type==='step'){directJob=null;directRunning=false;resetClock();sim?.step().forEach(b=>sim.changes.add(b));send(true);return;}if(data.type==='running'){advanceClock();directJob=null;directRunning=false;running=!!data.value;resetClock();send(true);return;}
-      directJob=null;directRunning=false;
+    function scheduleContinuous(delay=api.DIRECT_FRAME_MS){
+      const epoch=directEpoch;directTimer=setTimeout(()=>{
+        directTimer=null;if(epoch!==directEpoch||!directRunning||!sim)return;
+        const started=now();if(sim.pending.size)sim.resolvePending();send();
+        // Exactly one simultaneous torch update per frame; relays settle inside refresh.
+        scheduleContinuous(Math.max(0,api.DIRECT_FRAME_MS-(now()-started)));
+      },delay);
+    }
+    function startDirect(){if(!sim)return;leaveDirect();running=false;resetClock();directJob={rounds:0,seen:new Set()};send(true);directChunk();}
+    function startContinuous(){if(!sim)return;cancelDirect();running=false;directRunning=true;resetClock();sim.setContinuous(true);send(true);scheduleContinuous();}
+    function advanceClock(){const time=now();elapsed+=Math.max(0,time-lastTime);lastTime=time;if(directRunning){elapsed=0;return;}if(directJob){elapsed=0;directChunk();return;}if(!sim||!running||!sim.pending.size){elapsed=0;return;}const steps=Math.min(40,Math.floor(elapsed/api.GAME_TICK_MS));if(!steps)return;elapsed-=steps*api.GAME_TICK_MS;for(let i=0;i<steps&&sim.pending.size;i++)sim.step().forEach(b=>sim.changes.add(b));if(!sim.pending.size)elapsed=0;send(true);}
+    root.onmessage=e=>{try{const data=e.data;
+      if(data.type==='toggle'){advanceClock();resetClock();if(sim?.toggle(data.key)){if(directJob)startDirect();else send(true);}return;}
+      if(data.type==='direct'){startDirect();return;}
+      if(data.type==='direct-running'){if(data.value)startContinuous();else{leaveDirect();resetClock();send(true);}return;}
+      if(data.type==='step'){leaveDirect();resetClock();sim?.step().forEach(b=>sim.changes.add(b));send(true);return;}
+      if(data.type==='running'){advanceClock();leaveDirect();running=!!data.value;resetClock();send(true);return;}
+      cancelDirect();directRunning=false;
       current=api.build(data.state,(progress,message)=>root.postMessage({progress,message}),{basis:data.basis});sim=current.simulation;running=false;resetClock();sim.drain();const {world,simulation,...model}=current;root.postMessage({model},model.batches.map(b=>b.data.buffer));
     }catch(error){root.postMessage({error:error.message||'转换失败'});}};
     setInterval(advanceClock,api.GAME_TICK_MS);
@@ -376,5 +388,5 @@
   function moduleRegions(records,groups){const buckets=new Map(groups.map(g=>[g.scope,[]]));for(const r of records){if(!Number.isFinite(r.x)||['input','output'].includes(r.type))continue;let scope=r.scope;while(scope&&scope!=='root'&&!buckets.has(scope))scope=scope.slice(0,scope.lastIndexOf('/'));if(!buckets.has(scope))continue;buckets.get(scope).push({min:{x:Math.min(r.x,r.last?.x??r.x)-7.4,y:-.16,z:Math.min(r.z,r.last?.z??r.z)-3.4},max:{x:Math.max(r.x,r.last?.x??r.x)+5.4,y:-.08,z:Math.max(r.z,r.last?.z??r.z)+3.4}});}return groups.map(g=>{const rows=new Map();for(const box of buckets.get(g.scope)){const key=box.min.z+':'+box.max.z;if(!rows.has(key))rows.set(key,[]);rows.get(key).push(box);}const regions=[];for(const row of rows.values()){row.sort((a,b)=>a.min.x-b.min.x);let last;for(const box of row)if(last&&box.min.x<=last.max.x+.25)last.max.x=Math.max(last.max.x,box.max.x);else{last=box;regions.push(box);}}return {scope:g.scope,regions};});}
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,pickLever,bridgePaths,pruneWireLoops,advanceCamera,look,compile,build,moduleRegions,physicalGate,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,DIRECT_FRAME_MS:R.DIRECT_FRAME_MS,pickLever,bridgePaths,pruneWireLoops,advanceCamera,look,compile,build,moduleRegions,physicalGate,tint,updates};
 });
