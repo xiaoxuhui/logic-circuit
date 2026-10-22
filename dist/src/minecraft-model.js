@@ -55,6 +55,20 @@
     }
     corridors.sort((a,b)=>a.inside.length-b.inside.length||a.a-b.a||a.b-b.b);
     for(const c of corridors)if(!join(c.a,c.b))for(const id of c.inside)removed.add(id);
+    // Adjacent junctions have no corridor interior to remove. Drop a mutable
+    // junction only when every neighbour still connects without that cell.
+    const live=id=>links[id].filter(next=>!removed.has(next)),denseSeen=new Set();
+    for(let first=0;first<cells.length;first++)if(!removed.has(first)&&!denseSeen.has(first)){
+      const members=[first];denseSeen.add(first);let edgeCount=0;
+      for(let i=0;i<members.length;i++)for(const next of live(members[i])){edgeCount++;if(!denseSeen.has(next)){denseSeen.add(next);members.push(next);}}
+      let cycles=edgeCount/2-members.length+1;if(cycles<=0)continue;
+      const candidates=members.filter(id=>mutable[id]&&!devices[id]).sort((a,b)=>live(b).length-live(a).length||a-b);
+      for(const id of candidates){if(cycles<=0)break;const neighbours=live(id);if(neighbours.length<2)continue;
+        const missing=new Set(neighbours.slice(1)),seen=new Set([id,neighbours[0]]),search=[neighbours[0]];
+        for(let i=0;i<search.length&&missing.size;i++)for(const next of live(search[i]))if(!seen.has(next)){seen.add(next);missing.delete(next);search.push(next);}
+        if(!missing.size){removed.add(id);cycles-=neighbours.length-1;}
+      }
+    }
     // Removing a redundant corridor can leave a short spur beside its junction.
     const degree=links.map(list=>list.filter(id=>!removed.has(id)).length),queue=cells.flatMap((b,i)=>mutable[i]&&!devices[i]&&degree[i]<=1?[i]:[]);
     for(let i=0;i<queue.length;i++){const id=queue[i];if(removed.has(id)||!mutable[id]||devices[id]||degree[id]>1)continue;removed.add(id);for(const next of links[id])if(!removed.has(next)&&--degree[next]<=1)queue.push(next);}
