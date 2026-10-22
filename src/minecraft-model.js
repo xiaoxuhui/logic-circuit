@@ -66,7 +66,7 @@
   }
   // Port-bit aliases eliminate hubs, splitters and hierarchy boundaries, never a bus-valued block.
   function compile(source,options={}){
-    const state=C.validate(source),parent=new Map(),records=[],primitives=[],forced=[],groups=[],barrierPorts=new Set(),orDefinitions=new Map(),netCache=new Map(),context=C.createSimulationContext(state);
+    const state=C.validate(source),parent=new Map(),records=[],primitives=[],forced=[],groups=[],barrierPorts=new Set(),orBoundaries=[],orDefinitions=new Map(),netCache=new Map(),context=C.createSimulationContext(state);
     // Classify the definition, not its name or this instance's current input row.
     function isOr(id){if(orDefinitions.has(id))return orDefinitions.get(id);const d=state.definitions[id];let result=false;if(d.inputs.length===2&&d.outputs.length===1&&[...d.inputs,...d.outputs].every(p=>p.width===1)){const info=C.definitionInfo(id,state.definitions);if(info.method==='truth-table'&&!info.stateBits)result=[0,1,2,3].every(row=>{const input=Object.fromEntries(d.inputs.map((p,i)=>[p.id,[row>>i&1]])),sim=C.simulate({...d,definitions:state.definitions},input,1,context);return sim.outputs[d.outputs[0].id]?.[0]===Number(row!==0);});}orDefinitions.set(id,result);return result;}
     const find=k=>{if(!parent.has(k))parent.set(k,k);let p=k;while(parent.get(p)!==p)p=parent.get(p);while(k!==p){const next=parent.get(k);parent.set(k,p);k=next;}return p;};
@@ -80,7 +80,7 @@
       const handled=new Set();for(const [id,bits] of Object.entries(force)){const g=net.groups.get(net.wireNet.get(id));if(!g||handled.has(g.id))continue;handled.add(g.id);for(let bit=0;bit<g.width;bit++){const p=[...g.ports.values()].find(p=>p.width>bit);if(p)forced.push({token:port(scope,p.node,p.dir,p.port,bit),on:!!bits[bit],id,scope,bit});}}
       for(const node of local.nodes){const spec=C.spec(node,state.definitions),token=(dir,p,b)=>port(scope,node.id,dir,p,b);
         if(node.type==='hub'||node.type==='splitter'){for(let bit=0;bit<(node.bits||1);bit++)union(token(node.type==='hub'?'out':'in',0,bit),token(node.type==='hub'?'in':'out',bit,0));continue;}
-        if(node.type==='custom'){const def=state.definitions[node.def],child=scope+'/'+node.id,input=Object.fromEntries(def.inputs.map((p,i)=>[p.id,sim.portValues[C.key({node:node.id,dir:'in',port:i})]]));if(isOr(node.def))def.outputs.forEach((p,i)=>{for(let bit=0;bit<p.width;bit++)barrierPorts.add(token('out',i,bit));});if(options.hierarchy)groups.push({scope:child,parent:scope,name:def.name||node.label||node.def});visit(def,child,input,node.def,depth+1);for(const [dir,ports] of [['in',def.inputs],['out',def.outputs]])ports.forEach((p,i)=>{for(let bit=0;bit<p.width;bit++)union(token(dir,i,bit),port(child,p.id,dir==='in'?'out':'in',0,bit));});continue;}
+        if(node.type==='custom'){const def=state.definitions[node.def],child=scope+'/'+node.id,input=Object.fromEntries(def.inputs.map((p,i)=>[p.id,sim.portValues[C.key({node:node.id,dir:'in',port:i})]]));if(isOr(node.def))def.outputs.forEach((p,i)=>{for(let bit=0;bit<p.width;bit++)barrierPorts.add(token('out',i,bit));orBoundaries.push({output:token('out',i,0),inputs:def.inputs.map((_,p)=>token('in',p,0))});});if(options.hierarchy)groups.push({scope:child,parent:scope,name:def.name||node.label||node.def});visit(def,child,input,node.def,depth+1);for(const [dir,ports] of [['in',def.inputs],['out',def.outputs]])ports.forEach((p,i)=>{for(let bit=0;bit<p.width;bit++)union(token(dir,i,bit),port(child,p.id,dir==='in'?'out':'in',0,bit));});continue;}
         if(scope!=='root'&&['input','output'].includes(node.type))continue;
         const signal=node.type==='output'?sim.outputs[node.id]:sim.values[node.id]?.[0]||[0],record={id:node.id,scope,type:node.type,label:node.label||({input:'输入',output:'输出',nand:'与非门',delay:'延迟线'})[node.type],bits:node.bits||1,signal:signal.slice(),source:{x:node.x,y:node.y,rotation:node.rotation||0,label:node.label}};records.push(record);
         const count=node.type==='nand'?1:node.bits||1;for(let bit=0;bit<count;bit++)primitives.push({record,node,bit,inputs:spec.inputs.map((_,p)=>token('in',p,bit)),output:spec.outputs.length?token('out',0,bit):null,on:!!signal[bit],inputBits:spec.inputs.map((_,p)=>sim.portValues[C.key({node:node.id,dir:'in',port:p})]?.[bit]||0)});
@@ -94,7 +94,7 @@
     for(let i=0;i<queue.length;i++){const p=queue[i];if(needed.has(p))continue;needed.add(p);for(const token of p.inputs){if(seenNets.has(token))continue;seenNets.add(token);for(const driver of producers.get(token)||[])queue.push(driver);}}
     const retained=primitives.filter(p=>needed.has(p)),retainedRecords=new Set(retained.map(p=>p.record)),sourceNands=primitives.filter(p=>p.node.type==='nand').length;
     const barriers=new Set([...barrierPorts].map(find));for(const [token,list] of producers)if(list.length>1)barriers.add(token);
-    return simplify({state,records:records.filter(r=>retainedRecords.has(r)),primitives:retained,forced:forced.filter(p=>seenNets.has(p.token)),sourceNands,groups,barriers});
+    return simplify({state,records:records.filter(r=>retainedRecords.has(r)),primitives:retained,forced:forced.filter(p=>seenNets.has(p.token)),sourceNands,groups,barriers,orInputs:new Map(orBoundaries.map(b=>[find(b.output),b.inputs.map(find)]))});
   }
   // Simplify only the conversion copy. Registers and combinational feedback stay physical.
   function simplify(graph){
@@ -104,6 +104,8 @@
     const pending=new Map(),dependents=new Map(),ready=[],expressions=new Map(),inverses=new Map(),merged=new Map();
     for(const p of nands){const deps=new Set(p.inputs.flatMap(token=>forced.has(token)?[]:(drivers.get(token)||[]).filter(d=>d.node.type==='nand')));pending.set(p,deps.size);if(!deps.size)ready.push(p);for(const dep of deps){if(!dependents.has(dep))dependents.set(dep,[]);dependents.get(dep).push(p);}}
     for(let i=0;i<ready.length;i++){const p=ready[i],inputs=p.inputs.map(resolve),signature=JSON.stringify(inputs.slice().sort());p.inputs=inputs;
+      // A proven A OR A boundary is an identity, never infer this from current bit values.
+      const boundary=graph.orInputs.get(p.output);if(boundary&&drivers.get(p.output).length===1&&!forced.has(p.output)&&resolve(boundary[0])===resolve(boundary[1]))graph.barriers.delete(p.output);
       // Identical drivers may still deduplicate; never alias across the junction.
       if(!forced.has(p.output)&&(!graph.barriers.has(p.output)||drivers.get(p.output).length>1)){
         if(drivers.get(p.output).length===1){let replacement;if(inputs[0]===inputs[1]&&inverses.has(inputs[0]))replacement=resolve(inverses.get(inputs[0]));else if(expressions.has(signature))replacement=resolve(expressions.get(signature));
