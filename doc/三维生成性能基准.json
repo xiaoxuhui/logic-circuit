@@ -1,0 +1,90 @@
+{
+  "baseline": "623081f4e85e8a221839b271e26416a4ecc8d7e8",
+  "fingerprint": "metadata+binary-batches+world-cells",
+  "results": [
+    {
+      "name": "adder-nand",
+      "rounds": 5,
+      "beforeMs": 200,
+      "afterMs": 97,
+      "speedup": 2.06,
+      "beforeSamplesMs": [
+        226.1,
+        212.9,
+        188.3,
+        200,
+        190.3
+      ],
+      "afterSamplesMs": [
+        117.2,
+        97,
+        89,
+        90.3,
+        97.7
+      ],
+      "modelSha256": "42fc22587b27ea748e41d4af4d3f6fd4bce6b3ec09c757e528bca25be270693b",
+      "identical": true
+    },
+    {
+      "name": "adder-or-not",
+      "rounds": 5,
+      "beforeMs": 850.6,
+      "afterMs": 344.8,
+      "speedup": 2.47,
+      "beforeSamplesMs": [
+        860.3,
+        870.8,
+        844.7,
+        842.9,
+        850.6
+      ],
+      "afterSamplesMs": [
+        351.5,
+        341.8,
+        355.1,
+        337.4,
+        344.8
+      ],
+      "modelSha256": "f14b96fbbc63090f77a3944c870b9017185e1b734f3d7d7c5fd8d24fcd41f293",
+      "identical": true
+    },
+    {
+      "name": "30000-redundant-nands",
+      "rounds": 5,
+      "beforeMs": 322.6,
+      "afterMs": 341.4,
+      "speedup": 0.94,
+      "beforeSamplesMs": [
+        354.7,
+        309.7,
+        319.2,
+        334.4,
+        322.6
+      ],
+      "afterSamplesMs": [
+        347,
+        310.9,
+        350.4,
+        311.9,
+        341.4
+      ],
+      "modelSha256": "e5bb1b1999151cd0efe142d17628f871b2b71b95062d30ac01040a8f38202952",
+      "identical": true
+    },
+    {
+      "name": "30000-physical-nands",
+      "rounds": 1,
+      "beforeMs": 16653.6,
+      "afterMs": 14870.3,
+      "speedup": 1.12,
+      "beforeSamplesMs": [
+        16653.6
+      ],
+      "afterSamplesMs": [
+        14870.3
+      ],
+      "modelSha256": "b1c53fa8d460d12a4a70a23c9a62308111e3ad0197bc033fdaa923bd7bf22cb0",
+      "identical": true
+    }
+  ]
+}
