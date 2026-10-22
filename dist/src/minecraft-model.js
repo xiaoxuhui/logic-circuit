@@ -254,8 +254,8 @@
     const ownerBlocks=new Map();for(const b of world.cells.values()){if(!ownerBlocks.has(b.owner))ownerBlocks.set(b.owner,[]);ownerBlocks.get(b.owner).push(b);}
     for(const [net,group] of [...terminals])if(group.sources.length>1){const sources=group.sources.slice();group.sources=[];const branches=sources.map((source,i)=>{const name=net+'/driver'+i;for(const b of ownerBlocks.get(source.owner)||[])if(b.net===net)b.net=name;terminals.set(name,{sources:[source],targets:[]});netSignal.set(name,!!netSignal.get(net));return name;});let previous=branches[0];
       for(let i=1;i<branches.length;i++){const index=extraTile++,col=index%64,row=extraRow+Math.floor(index/64),x=4+col*24,z=4+row*20,out=i===branches.length-1?net:net+'/merge'+i;reserve(x,z,true);currentOwner=out+'/junction';
-        for(const [j,input] of [previous,branches[i]].entries()){const Z=z+(j?7:1);for(let dx=-2;dx<=1;dx++)dust(x+dx,1,Z,input,false);world.at({x:x-2,y:1,z:Z}).tail=3;terminal(input,world.at({x:x-2,y:1,z:Z}));device('repeater',x+2,1,Z,input,false,{delay:1,facing:0});for(let dx=3;dx<=6;dx++)dust(x+dx,1,Z,out,false);}
-        for(let dz=2;dz<7;dz++)dust(x+6,1,z+dz,out,false);dust(x+7,1,z+4,out,false);device('repeater',x+8,1,z+4,out,false,{delay:1,facing:0});for(let dx=9;dx<=12;dx++)dust(x+dx,1,z+4,out,false);terminal(out,world.at({x:x+12,y:1,z:z+4}),true);previous=out;
+        for(const [j,input] of [previous,branches[i]].entries()){const Z=z+(j?7:1);for(let dx=-2;dx<=1;dx++)dust(x+dx,1,Z,input,false);const entry=world.at({x:x-2,y:1,z:Z});entry.tail=3;entry.entryDirection={x:1,z:0};terminal(input,entry);device('repeater',x+2,1,Z,input,false,{delay:1,facing:0});for(let dx=3;dx<=6;dx++)dust(x+dx,1,Z,out,false);}
+        for(let dz=2;dz<7;dz++)dust(x+6,1,z+dz,out,false);dust(x+7,1,z+4,out,false);device('repeater',x+8,1,z+4,out,false,{delay:1,facing:0});for(let dx=9;dx<=12;dx++)dust(x+dx,1,z+4,out,false);const exit=world.at({x:x+12,y:1,z:z+4});exit.exitDirection={x:1,z:0};terminal(out,exit,true);previous=out;
       }
     }
     currentOwner=null;
