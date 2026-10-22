@@ -10,7 +10,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
     await page.locator('#file-input').setInputFiles({name:'unused-components.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(source))});
     await page.waitForFunction(()=>LogicApp.getState().nodes.length===6);
     const before=await page.evaluate(()=>LogicApp.getState()),view=()=>page.evaluate(()=>LogicMinecraftView.getStatus());
-    await page.locator('#minecraft-open').click();await page.waitForFunction(()=>LogicMinecraftView.getStatus().active&&!LogicMinecraftView.getStatus().loading);
+    await page.locator('#minecraft-open').click();await page.locator('#minecraft-basis').selectOption('nand');await page.waitForFunction(()=>LogicMinecraftView.getStatus().active&&!LogicMinecraftView.getStatus().loading);
     assert.equal((await view()).components,3);assert.equal((await view()).unrouted,0);assert.deepEqual((await view()).levers.map(l=>l.id),['a']);
     await page.locator('#minecraft-home').click();
     for(const value of [false,true,false]){
@@ -22,7 +22,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
     await page.locator('#minecraft-close').click();assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),before);
     source.nodes=source.nodes.filter(n=>n.type!=='output');source.wires=source.wires.filter(w=>w.b.node!=='o');
     await page.locator('#file-input').setInputFiles({name:'no-outputs.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(source))});
-    await page.waitForFunction(()=>LogicApp.getState().nodes.length===5);await page.locator('#minecraft-open').click();
+    await page.waitForFunction(()=>LogicApp.getState().nodes.length===5);await page.locator('#minecraft-open').click();await page.locator('#minecraft-basis').selectOption('nand');
     await page.waitForFunction(()=>LogicMinecraftView.getStatus().active&&!LogicMinecraftView.getStatus().loading);
     assert.equal((await view()).components,0);assert.equal((await view()).instances,0);assert.deepEqual(errors,[]);
     console.log('PASS unused components: private custom sinks, delays, exclusive lever omitted; shared input and output work; source unchanged; no-output scene empty');

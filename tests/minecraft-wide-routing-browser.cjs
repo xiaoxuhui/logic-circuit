@@ -11,7 +11,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
     await page.locator('#file-input').setInputFiles({name:'independent-eight-bit-adder.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(require('./minecraft-wide-adder-fixture.cjs')()))});
     await page.waitForFunction(()=>LogicApp.getState().nodes.some(n=>n.id==='f7'));
     const before=await page.evaluate(()=>LogicApp.getState());
-    await page.locator('#minecraft-open').click();
+    await page.locator('#minecraft-open').click();await page.locator('#minecraft-basis').selectOption('nand');
     for(const basis of ['nand','or-not']){
       if(basis==='or-not')await page.locator('#minecraft-basis').selectOption(basis);
       await page.waitForFunction(b=>!LogicMinecraftView.getStatus().loading&&LogicMinecraftView.getStatus().basis===b,basis,{timeout:120000});
