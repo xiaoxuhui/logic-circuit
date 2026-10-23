@@ -48,7 +48,7 @@
 })(typeof globalThis!=='undefined'?globalThis:this,function(C,E,R){
   'use strict';
   const STRIDE=11;
-  const BLOCKS=Object.freeze({support:{name:'白色混凝土',color:0xc7d1cc},slab:{name:'上半砖',color:0x9aa9a0},dust:{name:'红石粉',color:0x9f2922},torch:{name:'红石火把',color:0xcf6140},repeater:{name:'红石中继器',color:0xc5bab0},leverBase:{name:'拉杆底座',color:0x858e88},leverHandle:{name:'拉杆',color:0xb2a17b},lamp:{name:'红石灯',color:0xb27836},torchStem:{name:'火把木柄',color:0x947546},repeaterTrack:{name:'中继器方向线',color:0x802d26},repeaterGroove:{name:'中继器档位',color:0x85847b}});
+  const BLOCKS=Object.freeze({support:{name:'白色混凝土',color:0xc7d1cc},slab:{name:'上半砖',color:0x9aa9a0},dust:{name:'红石粉',color:0x9f2922},torch:{name:'红石火把',color:0xcf6140},repeater:{name:'红石中继器',color:0xc5bab0},leverBase:{name:'拉杆底座',color:0x858e88},leverHandle:{name:'拉杆',color:0xb2a17b},lamp:{name:'红石灯',color:0xb27836},torchStem:{name:'火把木柄',color:0x947546},repeaterTrack:{name:'中继器方向线',color:0x802d26},repeaterGroove:{name:'中继器档位',color:0x85847b},flowArrow:{name:'流向箭头',color:0x63d8ff}});
   const rgb=hex=>[(hex>>16&255)/255,(hex>>8&255)/255,(hex&255)/255];
   function advanceCamera(camera,keys,seconds,speed=12){const has=key=>keys.has?keys.has(key):keys.includes(key),forward=Number(has('KeyW'))-Number(has('KeyS')),right=Number(has('KeyD'))-Number(has('KeyA')),up=Number(has('Space'))-Number(has('ShiftLeft')||has('ShiftRight')),distance=Math.min(.05,Math.max(0,seconds))*speed/Math.max(1,Math.hypot(forward,right,up)),sin=Math.sin(camera.yaw),cos=Math.cos(camera.yaw);return {...camera,x:camera.x+(cos*right-sin*forward)*distance,y:camera.y+up*distance,z:camera.z+(-sin*right-cos*forward)*distance};}
   function look(camera,dx,dy){return {...camera,yaw:camera.yaw-dx*.0025,pitch:Math.max(-Math.PI/2+.02,Math.min(Math.PI/2-.02,camera.pitch-dy*.0025))};}
@@ -200,6 +200,22 @@
     }
     graph.primitives=[...graph.primitives.filter(p=>p.node.type!=='nand'),...generated];graph.records=[...graph.records.filter(r=>r.type!=='nand'),...generated.map(p=>p.record)];graph.layoutNands=generated.map(p=>p.record);
     graph.optimization={...graph.optimization,renderedNands:0,orGates:generated.filter(p=>p.node.type==='or').length,notGates:generated.filter(p=>p.node.type==='not').length};return graph;
+  }
+  // Geometry-only flow markers: routed source/target order wins over local dust traversal.
+  function flowArrows(world,paths=[]){
+    const edges=new Map(),links=new Map(),distance=new Map(),queue=[];
+    const add=(a,b)=>{if(!a||!b||a.net!==b.net||Math.abs(a.x-b.x)+Math.abs(a.z-b.z)!==1||Math.abs(a.y-b.y)>1)return;const ka=R.key(a),kb=R.key(b),k=ka<kb?ka+'|'+kb:kb+'|'+ka;if(!edges.has(k))edges.set(k,{from:ka,to:kb,net:a.net,x:a.x+.5,y:a.y+.2,z:a.z+.5,dx:b.x-a.x,dz:b.z-a.z});};
+    for(const path of paths)for(let i=1;i<path.points.length;i++)add(world.at(path.points[i-1]),world.at(path.points[i]));
+    const seed=b=>{if(b?.kind==='dust'&&!distance.has(b)){distance.set(b,0);queue.push(b);}};
+    for(const b of world.cells.values()){
+      if(b.kind==='dust')links.set(b,world.dustNeighbors(b).filter(q=>q.net===b.net));
+      if(['lever','torch'].includes(b.kind))for(const d of [...R.directions,{x:0,y:1,z:0},{x:0,y:-1,z:0}]){const q=world.at(R.add(b,d));if(q?.kind==='dust'&&q.net===b.net&&(!b.attached||R.key(q)!==R.key(b.attached))){seed(q);add(b,q);}}
+      if(b.kind==='repeater'){const d=R.directions[b.facing||0],front=world.at(R.add(b,d)),back=world.at(R.add(b,{x:-d.x,y:0,z:-d.z}));if(front?.kind==='dust'&&front.net===b.net){seed(front);add(b,front);}if(back?.kind==='dust')add(back,b);}
+      if(b.kind==='lamp')for(const d of R.directions){const q=world.at(R.add(b,d));if(q?.kind==='dust')add(q,b);}
+    }
+    for(let i=0;i<queue.length;i++){const b=queue[i];for(const q of links.get(b)||[])if(!distance.has(q)){distance.set(q,distance.get(b)+1);queue.push(q);}}
+    for(const [b,neighbors] of links)for(const q of neighbors)if(distance.has(b)&&distance.get(q)===distance.get(b)+1)add(b,q);
+    return [...edges.values()].filter(e=>{const b=world.cells.get(e.from),neighbors=links.get(b)||[];if(b.kind!=='dust'||neighbors.length!==2)return true;const [a,c]=neighbors,corner=a.x!==c.x&&a.z!==c.z;return corner||(distance.get(b)??(b.x+b.z))%4===0;});
   }
   function physicalGate(p){const type=p.node.type;if(type==='not')return {type:'not',label:'非门 NOT'};if(type==='or')return {type:'or',label:'或门 OR'};if(type!=='nand')return null;const [a,b]=p.forwardInputs||[false,false],tied=p.inputs[0]===p.inputs[1];if(tied){if(!!a!==!!b)return {type:'constant',label:'恒高电平 1'};return a?{type:'buffer',label:'缓冲门 BUF'}:{type:'not',label:'非门 NOT'};}if(a&&b)return {type:'or',label:'或门 OR'};if(a||b)return {type:'mixed',label:a?'混合反相 A∨¬B':'混合反相 ¬A∨B'};return {type:'nand',label:'与非门 NAND'};}
   function build(source,progress=()=>{},options={}){
@@ -382,17 +398,22 @@
       else if(b.kind==='repeater'){const direction=R.directions[b.facing],yaw=-b.facing*Math.PI/2;render(b,'repeater',x,y+.0625,z,.95,.125,.95);render(b,'repeaterTrack',x,y+.137,z,.65,.02,.045,yaw);for(const side of [-1,1])render(b,'repeaterTrack',x+direction.x*.32-direction.z*side*.055,y+.14,z+direction.z*.32+direction.x*side*.055,.18,.02,.035,yaw+side*Math.PI/4);for(const offset of [.3125,.0625-(b.delay-1)*.125]){render(b,'torchStem',x+direction.x*offset,y+.25,z+direction.z*offset,.085,.24,.085);render(b,'torch',x+direction.x*offset,y+.4,z+direction.z*offset,.14,.14,.14);}if(b.role==='delay')for(let tick=0;tick<4;tick++)render(b,'repeaterGroove',x+direction.x*(.0625-tick*.125),y+.138,z+direction.z*(.0625-tick*.125),.025,.018,.5,yaw);}
       else if(b.kind==='lamp')render(b,'lamp',x,y+.5,z);
     }
+    const arrows=flowArrows(world,paths);
+    for(const a of arrows){const yaw=-Math.atan2(a.dz,a.dx),b={};
+      render(b,'flowArrow',a.x+a.dx*.03,a.y,a.z+a.dz*.03,.78,.045,.11,yaw);
+      for(const side of [-1,1])render(b,'flowArrow',a.x+a.dx*.30-a.dz*side*.16,a.y,a.z+a.dz*.30+a.dx*side*.16,.46,.045,.11,yaw+side*Math.PI/4);
+    }
     if(!instanceCount){bounds.min={x:-1,y:0,z:-1};bounds.max={x:1,y:1,z:1};}for(const item of [...levers,...lamps]){item.renders=world.cells.get(item.key).renders;item.on=!!world.cells.get(item.key).on;}const focus=levers.slice().sort((a,b)=>(a.source?.y??Infinity)-(b.source?.y??Infinity)||(a.source?.x??Infinity)-(b.source?.x??Infinity)||b.bit-a.bit)[0]||graph.records[0]||{x:0,y:1,z:0};
     const groupBounds=new Map(),merge=(scope,box)=>{const old=groupBounds.get(scope);if(!old)groupBounds.set(scope,{min:{...box.min},max:{...box.max}});else for(const axis of ['x','y','z']){old.min[axis]=Math.min(old.min[axis],box.min[axis]);old.max[axis]=Math.max(old.max[axis],box.max[axis]);}};
     for(const r of graph.records)if(Number.isFinite(r.x)&&r.scope!=='root')merge(r.scope,{min:{x:Math.min(r.x,r.last?.x??r.x)-7,y:0,z:Math.min(r.z,r.last?.z??r.z)-3},max:{x:Math.max(r.x,r.last?.x??r.x)+5,y:r.y+3,z:Math.max(r.z,r.last?.z??r.z)+3}});
     for(let i=graph.groups.length-1;i>=0;i--){const g=graph.groups[i],box=groupBounds.get(g.scope);if(box&&g.parent!=='root')merge(g.parent,box);}
     const physicalCounts=new Map();for(const r of graph.records)if(r.physicalType&&Number.isFinite(r.x)){if(!physicalCounts.has(r.scope))physicalCounts.set(r.scope,{});const counts=physicalCounts.get(r.scope);counts[r.physicalType]=(counts[r.physicalType]||0)+1;}for(let i=graph.groups.length-1;i>=0;i--){const g=graph.groups[i],counts=physicalCounts.get(g.scope);if(!counts)continue;if(!physicalCounts.has(g.parent))physicalCounts.set(g.parent,{});const parent=physicalCounts.get(g.parent);for(const [type,count] of Object.entries(counts))parent[type]=(parent[type]||0)+count;}
     const nestedGates=graph.groups.filter(g=>groupBounds.has(g.scope)&&(g.parent==='root'||! /^(?:测试\s*)?(?:NAND|NOT|OR|与非门|非门|或门)$/i.test(g.name))).map((g,i)=>({...g,bounds:groupBounds.get(g.scope),number:i+1,label:g.name+' #'+(i+1),physicalCounts:physicalCounts.get(g.scope)||{}}));
-    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:b.used===b.data.length?b.data:b.data.slice(0,b.used)})),instanceCount,materialCounts,components:graph.records,basis,nestedGates,gateLabels:graph.records.filter(r=>r.physicalLabel&&Number.isFinite(r.x)).map(r=>({x:r.x,y:r.y,z:r.z,scope:r.scope,type:r.physicalType,label:r.physicalLabel})),bounds,focus,library:'内置红石方块',snapshot:true,physical:true,maxWireHeight,pendingEvents:sim.pending.size,optimization:graph.optimization,levers,lamps,warnings,unrouted,world,simulation:sim};
+    return {batches:[...batches.values()].map(b=>({kind:b.kind,key:b.key,data:b.used===b.data.length?b.data:b.data.slice(0,b.used)})),instanceCount,flowArrowCount:arrows.length,materialCounts,components:graph.records,basis,nestedGates,gateLabels:graph.records.filter(r=>r.physicalLabel&&Number.isFinite(r.x)).map(r=>({x:r.x,y:r.y,z:r.z,scope:r.scope,type:r.physicalType,label:r.physicalLabel})),bounds,focus,library:'内置红石方块',snapshot:true,physical:true,maxWireHeight,pendingEvents:sim.pending.size,optimization:graph.optimization,levers,lamps,warnings,unrouted,world,simulation:sim};
   }
   // Assign each physical footprint to exactly one visible module, not one giant box.
   function moduleRegions(records,groups){const buckets=new Map(groups.map(g=>[g.scope,[]]));for(const r of records){if(!Number.isFinite(r.x)||['input','output'].includes(r.type))continue;let scope=r.scope;while(scope&&scope!=='root'&&!buckets.has(scope))scope=scope.slice(0,scope.lastIndexOf('/'));if(!buckets.has(scope))continue;buckets.get(scope).push({min:{x:Math.min(r.x,r.last?.x??r.x)-7.4,y:-.16,z:Math.min(r.z,r.last?.z??r.z)-3.4},max:{x:Math.max(r.x,r.last?.x??r.x)+5.4,y:-.08,z:Math.max(r.z,r.last?.z??r.z)+3.4}});}return groups.map(g=>{const rows=new Map();for(const box of buckets.get(g.scope)){const key=box.min.z+':'+box.max.z;if(!rows.has(key))rows.set(key,[]);rows.get(key).push(box);}const regions=[];for(const row of rows.values()){row.sort((a,b)=>a.min.x-b.min.x);let last;for(const box of row)if(last&&box.min.x<=last.max.x+.25)last.max.x=Math.max(last.max.x,box.max.x);else{last=box;regions.push(box);}}return {scope:g.scope,regions};});}
   function tint(b,kind){if(kind==='dust')return [.25+.75*(b.power||0)/15,.035+.15*(b.power||0)/15,.02];if(kind==='repeaterTrack')return rgb(b.on?0xd83624:0x6f241d);if(kind==='torch')return rgb(b.on?0xffa94c:0x51352b);if(kind==='lamp')return rgb(b.on?0xffcd63:0x684522);if(kind==='leverHandle')return rgb(b.on?0xd7bd83:0xa49371);return rgb(BLOCKS[kind].color);}
   function updates(blocks){return blocks.flatMap(b=>(b.renders||[]).map(r=>({...r,color:tint(b,r.kind),on:!!b.on,power:b.power||0,tilt:r.kind==='leverHandle'?(b.on?-.5:.5):undefined,yaw:r.kind==='leverHandle'?-(b.facing||0)*Math.PI/2:undefined})));}
-  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,DIRECT_FRAME_MS:R.DIRECT_FRAME_MS,pickLever,bridgePaths,pruneWireLoops,advanceCamera,look,compile,build,moduleRegions,physicalGate,tint,updates};
+  return {BLOCKS,STRIDE,GAME_TICK_MS:R.GAME_TICK_MS,DIRECT_FRAME_MS:R.DIRECT_FRAME_MS,pickLever,bridgePaths,pruneWireLoops,advanceCamera,look,compile,build,flowArrows,moduleRegions,physicalGate,tint,updates};
 });
