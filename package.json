@@ -1,6 +1,6 @@
 {
   "name": "logic-workshop",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "private": true,
   "description": "逻辑工坊：从与非门开始搭建你的数字世界",
   "scripts": {

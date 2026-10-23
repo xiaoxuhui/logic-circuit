@@ -16,7 +16,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
       if(basis==='or-not')await page.locator('#minecraft-basis').selectOption(basis);
       await page.waitForFunction(b=>!LogicMinecraftView.getStatus().loading&&LogicMinecraftView.getStatus().basis===b,basis,{timeout:120000});
       const status=await page.evaluate(()=>LogicMinecraftView.getStatus());
-      assert.equal(status.unrouted,0);assert.ok(status.flowArrowCount>0);assert.match(await page.locator('.minecraft-legend').textContent(),/信号流向/);await page.locator('#minecraft-home').click();await page.evaluate(()=>new Promise(requestAnimationFrame));
+      assert.equal(status.unrouted,0);assert.ok(status.flowArrowCount>0);assert.ok(status.flowSegmentCount>status.flowArrowCount);assert.match(await page.locator('.minecraft-legend').textContent(),/连续流向/);await page.locator('#minecraft-home').click();await page.evaluate(()=>new Promise(requestAnimationFrame));
       assert.equal(status.levers.length,2);
       assert.equal(status.lamps.length,1);
       assert.equal(status.lamps.filter(l=>l.on).length,0);
