@@ -21,7 +21,7 @@ test('unpowered physical inputs seed internal wire arrows and keep them pointing
 });
 test('flow marks are decorative instances, never placed materials or signal changes',()=>{
   const source=require('./minecraft-junction-fixture.cjs')(),before=JSON.stringify(source),m=M.build(source,()=>{},{basis:'or-not'});
-  assert.ok(m.flowArrowCount>0);assert.ok(m.flowSegmentCount>=m.flowArrowCount);const count=m.batches.filter(b=>b.kind==='flowArrow').reduce((n,b)=>n+b.data.length/M.STRIDE,0);assert.ok(count>=m.flowSegmentCount+m.flowArrowCount*2);
+  assert.ok(m.flowArrowCount>0);assert.ok(m.flowSegmentCount>=m.flowArrowCount);const count=m.batches.filter(b=>b.kind==='flowArrow').reduce((n,b)=>n+b.data.length/M.STRIDE,0);assert.ok(count>=m.flowSegmentCount);assert.equal(m.flowHeads.length,m.flowArrowCount*6);
   assert.equal(m.materialCounts.flowArrow,undefined);assert.equal([...m.world.cells.values()].filter(b=>b.kind==='flowArrow').length,0);
   assert.equal(Object.values(m.materialCounts).reduce((a,b)=>a+b,0),m.world.cells.size);
   assert.deepEqual(m.unrouted,[]);assert.equal(JSON.stringify(source),before);

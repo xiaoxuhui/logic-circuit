@@ -6,7 +6,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
   const browser=await pw.chromium.launch({headless:true,args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   try{
     const page=await browser.newPage({viewport:{width:1500,height:1000}}),errors=[];
-    page.on('pageerror',e=>errors.push(e.message));
+    page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
     await page.goto('http://127.0.0.1:'+server.address().port);
     await page.locator('#file-input').setInputFiles({name:'independent-junction-feedback.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(require('./minecraft-junction-fixture.cjs')()))});
     await page.waitForFunction(()=>LogicApp.getState().nodes.some(n=>n.id==='hold'));
@@ -23,7 +23,7 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
       assert.doesNotMatch(await page.locator('#minecraft-signals').textContent(),/未布通/);
       assert.equal(await page.locator('#minecraft-stage canvas').count(),1);
       fs.mkdirSync(path.join(__dirname,'artifacts'),{recursive:true});
-      await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-'+basis+'.png')});
+      await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-'+basis+'.png')});assert.equal((await page.evaluate(()=>LogicMinecraftView.getStatus())).flowHeadPixels,22);await page.locator('#minecraft-overview').click();await page.evaluate(()=>new Promise(requestAnimationFrame));assert.equal((await page.evaluate(()=>LogicMinecraftView.getStatus())).flowHeadPixels,22);await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-overview.png')});
     }
     await page.locator('#minecraft-close').click();
     assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),before);
