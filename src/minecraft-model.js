@@ -215,7 +215,7 @@
     }
     for(let i=0;i<queue.length;i++){const b=queue[i];for(const q of links.get(b)||[])if(!distance.has(q)){distance.set(q,distance.get(b)+1);queue.push(q);}}
     for(const [b,neighbors] of links)for(const q of neighbors)if(distance.has(b)){if(distance.get(q)===distance.get(b)+1)add(b,q);else if(distance.get(q)===distance.get(b))add(b,q,false);}
-    return [...edges.values()].map(e=>{const b=world.cells.get(e.from),neighbors=links.get(b)||[],corner=neighbors.length===2&&neighbors[0].x!==neighbors[1].x&&neighbors[0].z!==neighbors[1].z;return {...e,important:neighbors.length>2||corner||b.kind==='lever'||world.cells.get(e.to)?.kind==='lamp',head:e.directed&&(b.kind!=='dust'||neighbors.length!==2||corner||(distance.get(b)??(b.x+b.z))%4===0)};});
+    return [...edges.values()].map(e=>{const b=world.cells.get(e.from),neighbors=links.get(b)||[],corner=neighbors.length===2&&neighbors[0].x!==neighbors[1].x&&neighbors[0].z!==neighbors[1].z;return {...e,important:neighbors.length>2||b.kind==='lever'||world.cells.get(e.to)?.kind==='lamp'?2:corner?1:0,head:e.directed&&(b.kind!=='dust'||neighbors.length!==2||corner||(distance.get(b)??(b.x+b.z))%4===0)};});
   }
   function flowSegments(a){
     const yaw=-Math.atan2(a.dz,a.dx),line=(t,y,length)=>({x:a.x+a.dx*t,y,z:a.z+a.dz*t,w:length,h:.045,d:.11,yaw});
