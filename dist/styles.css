@@ -63,3 +63,5 @@ dialog.minecraft-mode{position:fixed;inset:0;width:100vw;height:100dvh;max-width
 #minecraft-materials{display:flex;flex-wrap:wrap;gap:3px 12px;max-width:540px;color:#c7d6c6;font-size:11px;line-height:1.5}#minecraft-materials span{white-space:nowrap}@media(max-width:700px){#minecraft-materials{max-width:260px;font-size:9px}}
 
 #minecraft-toggle-flow{pointer-events:auto}
+
+.gate-editor-name{display:flex;align-items:center;gap:6px;padding:4px 8px;color:#cce6d8;font-size:11px}.gate-editor-name input{width:120px;min-width:50px;max-width:30vw;border:1px solid #4a705b;border-radius:3px;padding:4px 6px;color:#edf8f1;background:#12271e;font:inherit}.gate-editor-name input:disabled{opacity:.65}.gate-view-modes{max-width:calc(100% - 24px);flex-wrap:wrap}
