@@ -25,9 +25,19 @@ process.env.PORT='0';const server=require('../scripts/serve.cjs');
       fs.mkdirSync(path.join(__dirname,'artifacts'),{recursive:true});
       await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-'+basis+'.png')});assert.equal((await page.evaluate(()=>LogicMinecraftView.getStatus())).flowHeadPixels,22);await page.locator('#minecraft-overview').click();await page.evaluate(()=>new Promise(requestAnimationFrame));assert.equal((await page.evaluate(()=>LogicMinecraftView.getStatus())).flowHeadPixels,22);await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-overview.png')});
     }
+    const visible=await page.evaluate(()=>LogicMinecraftView.getStatus());assert.ok(visible.visibleFlowBatches>0);assert.equal(visible.visibleFlowHeads,true);
+    await page.locator('#minecraft-toggle-flow').click();
+    const hidden=await page.evaluate(()=>LogicMinecraftView.getStatus());assert.equal(hidden.flowVisible,false);assert.equal(hidden.visibleFlowBatches,0);assert.equal(hidden.visibleFlowHeads,false);assert.deepEqual(hidden.materialCounts,visible.materialCounts);assert.equal(hidden.uiHidden,false);
+    assert.equal(await page.locator('#minecraft-toggle-flow').textContent(),'显示蓝色箭头');
+    await page.screenshot({path:path.join(__dirname,'artifacts/minecraft-flow-hidden.png')});
+    await page.locator('#minecraft-regenerate').click();await page.waitForFunction(()=>!LogicMinecraftView.getStatus().loading);
+    assert.equal(await page.evaluate(()=>LogicMinecraftView.getStatus().visibleFlowBatches),0);assert.equal(await page.evaluate(()=>LogicMinecraftView.getStatus().visibleFlowHeads),false);
+    await page.locator('#minecraft-close').click();await page.locator('#minecraft-open').click();await page.waitForFunction(()=>!LogicMinecraftView.getStatus().loading);
+    assert.equal(await page.evaluate(()=>LogicMinecraftView.getStatus().flowVisible),false);assert.equal(await page.evaluate(()=>LogicMinecraftView.getStatus().visibleFlowBatches),0);
+    await page.locator('#minecraft-toggle-flow').click();assert.equal(await page.evaluate(()=>LogicMinecraftView.getStatus().visibleFlowHeads),true);assert.ok(await page.evaluate(()=>LogicMinecraftView.getStatus().visibleFlowBatches)>0);
     await page.locator('#minecraft-close').click();
     assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),before);
     assert.deepEqual(errors,[]);
-    console.log('PASS flow arrows: visible legend, nonzero instanced arrows, intact routing, unchanged source');
+    console.log('PASS flow toggle: guides and heads hide independently, regenerate/reopen preserve off state, show restores, source unchanged');
   }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;server.close();});

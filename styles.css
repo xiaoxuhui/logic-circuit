@@ -61,3 +61,5 @@ dialog.minecraft-mode{position:fixed;inset:0;width:100vw;height:100dvh;max-width
 @media(max-width:700px){.minecraft-header{padding-right:12px}.minecraft-header>div{padding-right:112px}.minecraft-ui-toggle{top:9px;right:10px;font-size:11px}}
 
 #minecraft-materials{display:flex;flex-wrap:wrap;gap:3px 12px;max-width:540px;color:#c7d6c6;font-size:11px;line-height:1.5}#minecraft-materials span{white-space:nowrap}@media(max-width:700px){#minecraft-materials{max-width:260px;font-size:9px}}
+
+#minecraft-toggle-flow{pointer-events:auto}
