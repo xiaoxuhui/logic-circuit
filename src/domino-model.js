@@ -111,10 +111,10 @@
       for(const [dx,dy] of dirs){const x=p.x+dx,y=p.y+dy,k=key(x,y);if(x<bounds.x0||x>bounds.x1||y<bounds.y0||y>bounds.y1||prev.has(k)||blocked.has(k))continue;prev.set(k,key(p.x,p.y));queue.push({x,y});}
     }return null;
   }
-  function buildTree(source){
+  function buildTree(source,options={}){
     const graph=flatten(source),bones=[],modules=[],inputs=[],delays=[],outputs=[],clocks=[],expressions=new Map(),nets=new Map(),bounds={minX:-35,minY:-35,maxX:100,maxY:100};let endAt=1,placedGateCount=0;const instances=[];
     const sources=graph.items.filter(p=>p.type==='input'||p.type==='delay').sort((a,b)=>(a.sourceY||0)-(b.sourceY||0)||(a.sourceX||0)-(b.sourceX||0)||b.bit-a.bit);
-    for(const p of sources){const item={id:p.id,label:p.label,bit:p.bit,value:p.value,pins:[]};(p.type==='input'?inputs:delays).push(item);expressions.set(p,{type:p.type,item,w:80,h:100});}
+    for(const p of sources){const item={id:p.id,label:p.label,bit:p.bit,value:p.value,pins:[]};(p.type==='input'?inputs:delays).push(item);expressions.set(p,{type:p.type,item,w:80,h:options.singleSources?2500*Math.max(1,sources.length-1)+600:100});}
     const zero={type:'zero',w:80,h:100},not=a=>({type:'not',a,w:a.w+260,h:a.h+180}),or=(a,b)=>({type:'or',a,b,w:Math.max(a.w,b.w)+220,h:a.h+b.h+100});
     const net=t=>{if(nets.has(t))return nets.get(t);const list=(graph.drivers.get(t)||[]).map(p=>expressions.get(p));if(list.some(p=>!p))throw Error('骨牌拓扑尚未就绪');const e=list.reduce((a,b)=>a?or(a,b):b,null)||zero;nets.set(t,e);return e;};
     for(const p of graph.order){const a=net(p.inputs[0]),b=net(p.inputs[1]);let e;if(a===b)e=not(a);else e=or(not(a),not(b));e={...e,nand:true};expressions.set(p,e);}
@@ -141,16 +141,66 @@
     let y=0;const sinks=graph.items.filter(p=>p.type==='output'||p.type==='delay').sort((a,b)=>(a.sourceY||0)-(b.sourceY||0)||b.bit-a.bit);
     for(const p of sinks){const expr=net(p.inputs[0]);if(!Number.isFinite(expr.h)||!Number.isFinite(expr.w))throw Error('无交叉骨牌布局过大');const r=place(expr,0,y),q=bones[r.pin],pin=bone(q.x+45,q.y,'output');const ready=r.ready+connect(r.pin,pin,[])+2;endAt=Math.max(endAt,ready);modules.push({x:q.x+45,y:q.y,label:p.type==='delay'?p.label+' · 下一轮':p.label,type:'output'});if(p.type==='delay')delays.find(d=>d.id===p.id).target=pin;else outputs.push({id:p.id,label:p.label,bit:p.bit,pin,ready});y+=expr.h+200;}
     const board={bones,modules,bounds,inputs,outputs,delays,clocks,endAt,gateCount:graph.order.length,placedGateCount};
-    board.originalBoneCount=bones.length;shareBranches(board,instances);contacts(board.bones);return board;
+    board.originalBoneCount=bones.length;if(options.singleSources)distributeSources(board);else shareBranches(board,instances);contacts(board.bones);return board;
+  }
+  function buildShared(source){
+    const initial=buildTree(source);
+    return [...initial.inputs,...initial.delays].some(p=>p.pins.length>1)?buildTree(source,{singleSources:true}):initial;
+  }
+  function distributeSources(board){
+    const sources=[...board.inputs,...board.delays],leaves=sources.flatMap((p,index)=>p.pins.map(pin=>({index,pin,y:board.bones[pin].y}))).sort((a,b)=>a.y-b.y),bones=board.bones;
+    if(!leaves.length)return;
+    const crossover=buildCrossover(),pitch=800,height=2500,right=-2000,order=sources.map((_,i)=>i),modules=board.modules.filter(p=>!['input','delay'].includes(p.type));
+    order.push(...order.splice(order.indexOf(leaves[0].index),1));
+    const add=(x,y,angle=Math.PI/2,kind='wire')=>{const id=bones.length;bones.push({x,y,angle,kind,next:[]});return id;};
+    const connect=(from,to,via=[])=>{let previous=from;for(const p of curvedPath([bones[from],...via,bones[to]]).slice(1,-1)){const id=add(p.x,p.y,p.angle);bones[previous].next.push(id);previous=id;}bones[previous].next.push(to);};
+    const x=i=>right-(sources.length-1-i)*pitch;
+    let pins=order.map((sourceIndex,i)=>{const p=sources[sourceIndex],pin=add(x(i),0,Math.PI/2,board.inputs.includes(p)?'input':'delay');p.pins.forEach(id=>bones[id].kind='wire');p.pins=[pin];modules.push({x:x(i),y:0,type:board.inputs.includes(p)?'input':'delay',label:p.label});return pin;}),y=0,crossings=0;
+    const bypass=(from,to,amplitude,sign)=>{const a=bones[from];connect(from,to,[{x:a.x,y:a.y+250},{x:a.x+sign*amplitude,y:a.y+250},{x:a.x+sign*amplitude,y:a.y+850},{x:a.x,y:a.y+850},{x:a.x,y:a.y+1450},{x:a.x+sign*amplitude,y:a.y+1450},{x:a.x+sign*amplitude,y:a.y+2050},{x:a.x,y:a.y+2050}]);};
+    // Every bus track takes the same number of physical contacts per stage.
+    // This keeps both inputs of each three-XOR crossover synchronous.
+    let bypassAmplitude;
+    function stage(pair){
+      const mid=(x(pair)+x(pair+1))/2,map=new Map(),ends=pins.map((_,i)=>add(x(i),y+height));
+      map.set(crossover.inputs[0].pins[0],pins[pair+1]);map.set(crossover.inputs[1].pins[0],pins[pair]);
+      for(let i=0;i<crossover.bones.length;i++)if(!map.has(i)){map.set(i,bones.length);const p=crossover.bones[i];bones.push({x:mid-p.y,y:y+720+p.x,angle:p.angle+Math.PI/2,kind:'wire',next:[]});}
+      for(let i=0;i<crossover.bones.length;i++)bones[map.get(i)].next.push(...crossover.bones[i].next.map(id=>map.get(id)));
+      connect(map.get(crossover.outputs[0].pin),ends[pair+1]);connect(map.get(crossover.outputs[1].pin),ends[pair]);
+      if(bypassAmplitude===undefined){
+        const probe={bones:bones.map(p=>({...p,next:[...p.next]})),inputs:[{id:'probe',value:1,pins:[pins[pair]]}],delays:[],outputs:[],clocks:[],endAt:10000};contacts(probe.bones);const sim=new Simulator(probe);let target;
+        while(!sim.complete){sim.step();if(sim.states[ends[pair+1]]===1&&target===undefined)target=sim.tick;}
+        if(!target)throw Error('通用分岔交叉器未接通');
+        const started=bones.length;
+        for(let amplitude=100;amplitude<=650;amplitude++){
+          const from=add(0,0),to=add(0,height);bypass(from,to,amplitude,1);const sample=bones.slice(started).map(p=>({...p,next:p.next.map(id=>id-started)}));contacts(sample);const test=new Simulator({bones:sample,inputs:[{id:'probe',value:1,pins:[0]}],outputs:[{pin:1}],delays:[],clocks:[],endAt:10000});test.run();const reached=test.states[1]===1;const tick=test.tick;bones.length=started;if(reached&&tick===target){bypassAmplitude=amplitude;break;}
+        }
+        if(bypassAmplitude===undefined)throw Error('通用分岔的直通线路尚未同步');
+      }
+      for(let i=0;i<pins.length;i++)if(i!==pair&&i!==pair+1)bypass(pins[i],ends[i],bypassAmplitude,i<pair?-1:1);
+      modules.push({x:mid,y:y+height/2,label:'三异或交叉器',type:'gate'});[order[pair],order[pair+1]]=[order[pair+1],order[pair]];pins=ends;y+=height;crossings++;
+    }
+    for(const leaf of leaves){
+      let position=order.indexOf(leaf.index);while(position<order.length-1){stage(position);position++;}
+      const tapY=leaf.y-200;if(tapY<y+200)throw Error('通用分岔线路间距不足');
+      pins=pins.map((pin,i)=>{const next=add(x(i),tapY);connect(pin,next);return next;});y=tapY;
+      const next=pins.map((pin,i)=>{const p=bones[pin],head=add(p.x-7,p.y+18,Math.PI/2+Math.PI/5),out=add(p.x,p.y+180);p.next.push(head);connect(head,out,[{x:p.x-55,y:p.y+70},{x:p.x-55,y:p.y+130}]);return out;});
+      const pin=pins.at(-1),p=bones[pin],head=add(p.x+7,p.y+18,Math.PI/2-Math.PI/5);p.next.push(head);connect(head,leaf.pin,[{x:p.x+55,y:p.y+70},{x:-900,y:p.y+70},{x:-900,y:leaf.y}]);pins=next;y+=180;
+      if(bones.length>1000000)throw Error('单源分岔布局超过一百万张骨牌');
+    }
+    board.modules=modules;board.crossovers=crossings;board.sharedBranches=leaves.length;board.singleOrigin=true;
+    const probe=new Simulator({...board,clocks:[]}),arrivals=new Map(),leafIds=new Set(leaves.map(p=>p.pin));probe.inputs.forEach(p=>p.value=1);probe.delays.forEach(p=>p.value=1);contacts(bones);probe.reset();while(!probe.complete){probe.step();for(const [id,state] of probe.changes)if(state===1&&leafIds.has(id)&&!arrivals.has(id))arrivals.set(id,probe.tick);probe.changes=[];}if(arrivals.size!==leafIds.size)throw Error('通用分岔有输入尚未接通');
+    const count=board.originalBoneCount,indegree=new Int32Array(count),ready=new Float64Array(count).fill(1),edges=bones.slice(0,count).map(p=>p.next.filter(id=>id<count).map(id=>[id,1]));for(const [id,tick] of arrivals)ready[id]=tick;for(const c of board.clocks)edges[c.after].push([c.pin,4]);for(const list of edges)for(const [id] of list)indegree[id]++;
+    const queue=[];for(let i=0;i<count;i++)if(!indegree[i])queue.push(i);for(let i=0;i<queue.length;i++)for(const [next,weight] of edges[queue[i]]){ready[next]=Math.max(ready[next],ready[queue[i]]+weight);if(!--indegree[next])queue.push(next);}if(queue.length!==count)throw Error('通用分岔不能形成无延迟反馈');for(const c of board.clocks)c.at=ready[c.pin];board.endAt=Math.max(...board.clocks.map(c=>c.at),1)+bones.length;
+    for(const p of bones){board.bounds.minX=Math.min(board.bounds.minX,p.x-55);board.bounds.minY=Math.min(board.bounds.minY,p.y-55);board.bounds.maxX=Math.max(board.bounds.maxX,p.x+55);board.bounds.maxY=Math.max(board.bounds.maxY,p.y+55);}
   }
   function build(source){
     const inNodes=(source.nodes||[]).filter(n=>n.type==='input'),outNodes=(source.nodes||[]).filter(n=>n.type==='output');
-    if(inNodes.reduce((a,n)=>a+(n.bits||1),0)!==3||outNodes.reduce((a,n)=>a+(n.bits||1),0)!==2)return buildTree(source);
+    if(inNodes.reduce((a,n)=>a+(n.bits||1),0)!==3||outNodes.reduce((a,n)=>a+(n.bits||1),0)!==2)return buildShared(source);
     source=C.validate(source);const ins=inNodes.flatMap(n=>Array.from({length:n.bits||1},(_,bit)=>({n,bit}))),outs=outNodes.flatMap(n=>Array.from({length:n.bits||1},(_,bit)=>({n,bit})));let sumIndex=-1;
     const standard=demo(),signature=s=>JSON.stringify([s.nodes.map(n=>[n.id,n.type,n.bits||1,n.def||null]),s.wires.map(w=>[w.a,w.b])]);
     if(!Object.keys(source.wireOverrides||{}).length&&!Object.keys(source.scopedWireOverrides||{}).length&&signature(source)===signature(standard))sumIndex=0;
     else try{const graph=flatten(source);if(!graph.items.some(p=>p.type==='delay')){let direct=true,reversed=true;for(let row=0;row<8;row++){const overrides=Object.fromEntries(inNodes.map(n=>[n.id,Array(n.bits||1).fill(0)]));ins.forEach((p,i)=>overrides[p.n.id][p.bit]=row>>i&1);const sim=C.simulate(source,overrides),total=(row&1)+(row>>1&1)+(row>>2&1),values=outs.map(p=>sim.outputs[p.n.id]?.[p.bit]);direct&&=values[0]===(total&1)&&values[1]===(total>>1);reversed&&=values[1]===(total&1)&&values[0]===(total>>1);}if(direct||reversed)sumIndex=direct?0:1;}}catch{}
-    if(sumIndex<0)return buildTree(source);
+    if(sumIndex<0)return buildShared(source);
     const board=buildFullAdder(),ordered=ins.slice(),ci=ordered.findIndex(p=>/cin|c_in|进位/i.test(p.n.label||p.n.id));if(ci>=0&&ci!==2)ordered.push(...ordered.splice(ci,1));
     board.inputs.forEach((p,i)=>{const {n,bit}=ordered[i];p.id='root/'+n.id+':'+bit;p.label=(n.label||['A','B','进位 C_in'][i])+((n.bits||1)>1?' · b'+bit:'');p.bit=bit;p.value=C.bitArray(n.value||0,n.bits||1)[bit];});
     const physical=board.outputs,mapped=outs.map((p,i)=>({...physical[i===sumIndex?0:1],id:'root/'+p.n.id+':'+p.bit,label:(p.n.label||physical[i===sumIndex?0:1].label)+((p.n.bits||1)>1?' · b'+p.bit:''),bit:p.bit,node:p.n.id}));
@@ -164,7 +214,7 @@
     run(){while(!this.complete)this.step();return this.status();}
     setInput(id,value){const p=this.inputs.find(p=>p.id===id);if(!p||![0,1].includes(value))throw Error('骨牌输入必须是0或1');p.value=value;this.reset();}
     nextCycle(){if(!this.complete)throw Error('请先完成本轮推倒，再采样延迟并进入下一轮');const values=this.delays.map(p=>Number(this.states[p.target]===1));this.delays.forEach((p,i)=>p.value=values[i]);this.cycle++;this.reset();}
-    status(){return {tick:this.tick,endAt:this.board.endAt,cycle:this.cycle,complete:this.complete,toppled:this.toppled,total:this.states.length,singleOrigin:!!this.board.singleOrigin,inputOrigins:this.inputs.map(p=>(p.pins||[p.pin]).length),sharedBranches:this.board.sharedBranches||0,savedBones:this.board.savedBones||0,inputs:this.inputs.map(({id,label,bit,value})=>({id,label,bit,value})),delays:this.delays.map(p=>({id:p.id,label:p.label,value:p.value,next:this.complete?Number(this.states[p.target]===1):null})),outputs:this.board.outputs.map(p=>({id:p.id,label:p.label,bit:p.bit,value:this.complete?Number(this.states[p.pin]===1):null}))};}
+    status(){return {tick:this.tick,endAt:this.board.endAt,cycle:this.cycle,complete:this.complete,toppled:this.toppled,total:this.states.length,singleOrigin:!!this.board.singleOrigin,crossovers:this.board.crossovers||0,inputOrigins:this.inputs.map(p=>(p.pins||[p.pin]).length),sharedBranches:this.board.sharedBranches||0,savedBones:this.board.savedBones||0,inputs:this.inputs.map(({id,label,bit,value})=>({id,label,bit,value})),delays:this.delays.map(p=>({id:p.id,label:p.label,value:p.value,next:this.complete?Number(this.states[p.target]===1):null})),outputs:this.board.outputs.map(p=>({id:p.id,label:p.label,bit:p.bit,value:this.complete?Number(this.states[p.pin]===1):null}))};}
   }
   function analyzeInputs(board,memory){
     if(board.statistics&&!board.delays.length)return C.clone(board.statistics);const count=board.inputs.length,cases=2**count;
@@ -298,5 +348,5 @@
     function xor(prefix,a,b,x,y){const t=gate(prefix+'n',a,b,x,y),u=gate(prefix+'u',a,t,x+180,y-60),v=gate(prefix+'v',b,t,x+180,y+70);return {out:gate(prefix+'o',u,v,x+360,y),both:t};}
     const ab=xor('ab','a','b',220,40),sum=xor('sum',ab.out,'cin',800,180),carry=gate('carry',ab.both,sum.both,1380,360);n('sumout','output',1600,0,'和 S');n('carryout','output',1600,180,'进位 C');w(sum.out,'sumout');w(carry,'carryout');return {version:1,nodes,wires,definitions:{}};
   }
-  return {flatten,curvedPath,build,buildTree,buildGate,buildCrossover,buildRouting,buildHalfAdder,buildFullAdder,analyzeInputs,Simulator,demo,hits,contacts,DIMENSIONS};
+  return {flatten,curvedPath,build,buildTree,buildShared,buildGate,buildCrossover,buildRouting,buildHalfAdder,buildFullAdder,analyzeInputs,Simulator,demo,hits,contacts,DIMENSIONS};
 });

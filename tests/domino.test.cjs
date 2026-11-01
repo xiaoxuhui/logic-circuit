@@ -75,8 +75,19 @@ test('packaged and bus full adders are recognized by function, preserving names,
   const bus={version:1,definitions:{fa:def},nodes:[node('abc','input',0,0,{bits:3,value:5}),node('split','splitter',200,0,{bits:3}),node('fa','custom',400,0,{def:'fa'}),node('hub','hub',600,0,{bits:2}),node('out','output',800,0,{bits:2})],wires:[wire('abc','abc','split'),...Array.from({length:3},(_,port)=>({id:'i'+port,a:{node:'split',dir:'out',port},b:{node:'fa',dir:'in',port}})),...Array.from({length:2},(_,port)=>({id:'o'+port,a:{node:'fa',dir:'out',port},b:{node:'hub',dir:'in',port}})),wire('q','hub','out')]};const b=D.build(bus);assert.equal(b.singleOrigin,true);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);const s=new D.Simulator(b);assert.deepEqual(s.run().outputs.map(p=>p.value),[1,0]);
 });
 test('full-adder recognition checks all input rows instead of trusting a name or the current output',()=>{
-  const source=D.demo();source.name='Full adder';source.wires[0].a.node='b';assert.notEqual(D.build(source).singleOrigin,true);
+  const source=D.demo();source.name='Full adder';source.wires[0].a.node='b';assert.notEqual(D.build(source).gateTitle,'全加器');
 });
 test('step analysis leaves a non-adder board unchanged and rejects an unbounded input search',()=>{
   const b=D.buildGate('or'),before=JSON.stringify(b),r=D.analyzeInputs(b);assert.equal(r.minSteps,1);assert.deepEqual(r.minInputs,[[0,0]]);assert.ok(r.maxSteps>r.minSteps);assert.equal(JSON.stringify(b),before);assert.throws(()=>D.analyzeInputs({inputs:Array(13).fill({}),bones:[],delays:[]}),/12位/);
+});
+
+test('ordinary custom gates use single input origins, physical forks and synchronized three-XOR crossings',()=>{
+  const inner={version:1,definitions:{},nodes:['a','b','c'].map((id,i)=>node(id,'input',0,i*160)),wires:[]};
+  ['ab','ac','bc'].forEach((id,i)=>{inner.nodes.push(node(id,'nand',200,i*160),node('o'+id,'output',400,i*160));inner.wires.push(wire(id+'a',id[0],id),wire(id+'b',id[1],id,1),wire(id+'o',id,'o'+id));});
+  const def=C.makeDefinition(inner,'three pairs'),source={version:1,definitions:{pairs:def},nodes:[...['a','b','c'].map((id,i)=>node(id,'input',0,i*160)),node('gate','custom',250,0,{def:'pairs'}),...['ab','ac','bc'].map((id,i)=>node('o'+id,'output',500,i*160))],wires:[...['a','b','c'].map((id,i)=>wire('i'+i,id,'gate',i)),...['ab','ac','bc'].map((id,i)=>({id:'o'+i,a:{node:'gate',dir:'out',port:i},b:{node:'o'+id,dir:'in',port:0}}))]},before=JSON.stringify(source);
+  const old=C.simulate;let board;C.simulate=()=>{throw Error('custom domino routing must use physical propagation');};try{board=D.build(source);}finally{C.simulate=old;}
+  assert.deepEqual(board.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(board.bones.filter(p=>p.kind==='input').length,3);assert.ok(board.crossovers>0);assert.ok(board.bones.some(p=>p.next.length>1&&p.contacts[0].length>1));
+  for(const p of board.bones)for(const id of p.next)assert.ok(D.hits(p,board.bones[id])||D.hits(p,board.bones[id],-1));
+  for(let row=0;row<8;row++){const sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();const expected=['ab','ac','bc'].map(id=>Number(!((row>>'abc'.indexOf(id[0])&1)&&(row>>'abc'.indexOf(id[1])&1))));assert.deepEqual(sim.run().outputs.map(p=>p.value),expected);}
+  assert.equal(JSON.stringify(source),before);
 });
