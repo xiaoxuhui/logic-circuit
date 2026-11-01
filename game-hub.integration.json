@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "logic-circuit",
   "displayName": "逻辑工坊",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "directory": "dist",
   "entryPage": "index.html",
   "files": [
@@ -17,6 +17,10 @@
     "src/minecraft-view.js",
     "src/domino-model.js",
     "src/domino-view.js",
+    "src/wireworld-model.js",
+    "src/wireworld-compile.js",
+    "src/wireworld-worker.js",
+    "src/wireworld-view.js",
     "src/vendor/three.min.js",
     "src/vendor/THREE-LICENSE.txt",
     "src/vendor/three.provenance.json"
@@ -25,7 +29,9 @@
   "storageContract": "logic-circuit-dynamic-v1",
   "storageKeys": [
     "logic-workshop-v1",
-    "logic-workshop-refresh-backups-v1"
+    "logic-workshop-refresh-backups-v1",
+    "logic-workshop-wireworld-v1",
+    "logic-workshop-wireworld-backup-v1"
   ],
   "minHostVersionCode": 4,
   "resourceProtocol": 2,

@@ -462,7 +462,7 @@
   svg.addEventListener('keydown',e=>{const t=e.target.closest('[data-toggle]');if(t&&['Enter',' '].includes(e.key)){e.preventDefault();toggle(t.dataset.toggle);}});
   svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e),true);},{passive:false});
   document.addEventListener('keydown',e=>{
-    if($('minecraft-dialog').open)return;
+    if($('minecraft-dialog').open||$('wireworld-dialog')?.open)return;
     if(pastePreview){if(e.key==='Escape'){e.preventDefault();cancelPaste();}else if(!e.target.matches('input,select,textarea'))e.preventDefault();return;}
     if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
     if(e.target.matches('input,select,textarea')||e.target.isContentEditable||document.querySelector('dialog[open]')||placement)return;
