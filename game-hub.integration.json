@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "logic-circuit",
   "displayName": "逻辑工坊",
-  "version": "0.3.20",
+  "version": "0.3.21",
   "directory": "dist",
   "entryPage": "index.html",
   "files": [
@@ -15,6 +15,8 @@
     "src/minecraft-redstone.js",
     "src/minecraft-model.js",
     "src/minecraft-view.js",
+    "src/domino-model.js",
+    "src/domino-view.js",
     "src/vendor/three.min.js",
     "src/vendor/THREE-LICENSE.txt",
     "src/vendor/three.provenance.json"

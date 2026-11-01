@@ -1,0 +1,51 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('../src/core'),D=require('../src/domino-model');
+const node=(id,type,x=0,y=0,extra={})=>({id,type,x,y,...extra}),wire=(id,a,b,port=0)=>({id,a:{node:a,dir:'out',port:0},b:{node:b,dir:'in',port}});
+const nand=()=>({version:1,definitions:{},nodes:[node('a','input'),node('b','input',0,160),node('g','nand',250),node('o','output',500)],wires:[wire('a','a','g'),wire('b','b','g',1),wire('q','g','o')]});
+test('rounded routes use smoothly changing tangents and contact-sized gaps through corners',()=>{
+  const path=D.curvedPath([{x:0,y:0},{x:140,y:0},{x:140,y:140},{x:280,y:140}]);assert.ok(path.some(p=>p.x<140&&p.y>0&&p.y<34),'a real curved arc replaces the sharp elbow');
+  assert.deepEqual({x:path[0].x,y:path[0].y},{x:0,y:0});assert.deepEqual({x:path.at(-1).x,y:path.at(-1).y},{x:280,y:140});
+  for(let i=1;i<path.length;i++){assert.ok(Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y)<=14.001);const delta=Math.atan2(Math.sin(path[i].angle-path[i-1].angle),Math.cos(path[i].angle-path[i-1].angle));assert.ok(Math.abs(delta)<Math.PI/4,'adjacent bones turn progressively');}
+  const board=D.build(D.demo());assert.ok(board.bones.some(b=>Math.abs(Math.sin(b.angle*2))>.2),'generated circuits include diagonally oriented bones around arcs');
+});
+test('clocked domino NAND: four rows; side front removes actual bridge before trigger; source unchanged',()=>{
+  for(let row=0;row<4;row++){const source=nand();source.nodes[0].value=row&1;source.nodes[1].value=row>>1;const before=JSON.stringify(source),board=D.build(source),sim=new D.Simulator(board);assert.equal(sim.status().outputs[0].value,null);assert.ok(board.bones.some(b=>b.kind==='bridge'));
+    const r=sim.run();assert.equal(r.outputs[0].value,Number(row!==3));assert.equal(board.bones.filter((b,i)=>b.kind==='bridge'&&sim.states[i]===2).length,(row&1)+(row>>1));assert.equal(JSON.stringify(source),before);
+    const output=board.outputs[0].pin;assert.equal(sim.states[output],row===3?0:1);sim.reset();assert.equal(sim.toppled,0);assert.equal(sim.states.filter(Boolean).length,0);assert.equal(sim.run().outputs[0].value,Number(row!==3));
+  }
+});
+test('full adder computes all eight rows from toppling events, without core simulation',()=>{
+  const old=C.simulate;C.simulate=()=>{throw Error('electronic simulation must not calculate domino results');};try{for(let row=0;row<8;row++){const source=D.demo();source.nodes.slice(0,3).forEach((n,i)=>n.value=row>>i&1);const r=new D.Simulator(D.build(source)).run(),sum=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(r.outputs.map(p=>p.value),[sum&1,sum>>1]);}}finally{C.simulate=old;}
+});
+test('nested definitions preserve instance multiplicity, bus bits and wired OR',()=>{
+  const inner=nand(),def=C.makeDefinition(inner,'NAND'),source={version:1,definitions:{gate:def},nodes:[node('a','input'),node('b','input',0,160),node('x','custom',220,0,{def:'gate'}),node('y','custom',440,0,{def:'gate'}),node('o','output',660)],wires:[wire('a','a','x'),wire('b','b','x',1),wire('x','x','y'),wire('xx','x','y',1),wire('o','y','o')]};
+  for(let row=0;row<4;row++){source.nodes[0].value=row&1;source.nodes[1].value=row>>1;const board=D.build(source);assert.equal(board.gateCount,2);assert.equal(new D.Simulator(board).run().outputs[0].value,Number(row===3));}
+  const bus={version:1,definitions:{},nodes:[node('a','input',0,0,{bits:4,value:5}),node('b','input',0,160,{bits:2,value:3}),node('o','output',500,0,{bits:8})],wires:[wire('a','a','o'),wire('b','b','o')]};const sim=new D.Simulator(D.build(bus));assert.deepEqual(sim.run().outputs.slice().sort((a,b)=>a.bit-b.bit).map(p=>p.value),[1,1,1,0,0,0,0,0]);
+});
+test('delay feedback samples simultaneously only after a completed round; rearming preserves memory',()=>{
+  const source={version:1,definitions:{},nodes:[node('d','delay'),node('g','nand',250),node('o','output',500)],wires:[wire('a','d','g'),wire('b','d','g',1),wire('q','g','d'),wire('o','d','o')],delayState:{'root/d':1}},before=JSON.stringify(source),sim=new D.Simulator(D.build(source));assert.throws(()=>sim.nextCycle(),/先完成/);
+  for(let cycle=0;cycle<6;cycle++){const r=sim.run();assert.equal(r.outputs[0].value,1-cycle%2);assert.equal(r.delays[0].next,cycle%2);sim.reset();assert.equal(sim.run().outputs[0].value,1-cycle%2);sim.nextCycle();}assert.equal(JSON.stringify(source),before);
+});
+test('unconnected inputs default low; forced values and reset/invalid inputs are handled independently',()=>{
+  const s=nand();s.wires=[];const sim=new D.Simulator(D.build(s));assert.equal(sim.run().outputs[0].value,0);assert.throws(()=>sim.setInput('root/a:0',9),/0或1/);sim.setInput('root/a:0',1);assert.equal(sim.tick,0);
+  const f=nand();f.nodes[0].value=1;f.nodes[1].value=1;f.wireOverrides={a:[0]};assert.equal(new D.Simulator(D.build(f)).run().outputs[0].value,1);
+});
+test('combinational feedback is rejected instead of inventing a computed result',()=>{
+  const s=nand();s.wires=[wire('loop','g','g'),wire('q','g','o')];assert.throws(()=>D.build(s),/反馈环/);assert.equal(new D.Simulator(D.build({version:1,nodes:[],wires:[],definitions:{}})).run().outputs.length,0);
+});
+test('every intended link can physically touch; removing contact stops propagation rather than jumping a gap',()=>{
+  const board=D.build(D.demo());for(const a of board.bones)for(const id of a.next)assert.ok(D.hits(a,board.bones[id]),'next domino is within the falling footprint');
+  const source=nand();source.nodes[0].value=1;source.nodes[1].value=1;const b=D.build(source);assert.equal(new D.Simulator(b).run().outputs[0].value,0);
+  const bridge=b.bones.findIndex(p=>p.kind==='bridge');assert.ok(b.bones.some(p=>p.kind==='knock'&&p.contacts[0].some(([id,dir])=>id===bridge&&dir===-1)),'data physically pushes the bridge in reverse');
+  const s=nand();s.nodes[0].value=0;s.nodes[1].value=1;const normal=D.build(s);assert.equal(new D.Simulator(normal).run().outputs[0].value,1);
+  for(const p of normal.bones)if(p.kind==='bridge')p.x+=10000;D.contacts(normal.bones);assert.equal(new D.Simulator(normal).run().outputs[0].value,0,'a missing bridge cannot be crossed via an abstract edge');
+});
+test('separate domino paths do not cross between connected endpoints',()=>{
+  const b=D.build(D.demo()),edges=[];for(let i=0;i<b.bones.length;i++)for(const j of b.bones[i].next)edges.push({i,j,a:b.bones[i],b:b.bones[j]});const cells=new Map(),checked=new Set();
+  for(let k=0;k<edges.length;k++){const e=edges[k];for(let y=Math.floor(Math.min(e.a.y,e.b.y)/32);y<=Math.floor(Math.max(e.a.y,e.b.y)/32);y++)for(let x=Math.floor(Math.min(e.a.x,e.b.x)/32);x<=Math.floor(Math.max(e.a.x,e.b.x)/32);x++){
+    const key=x+','+y,list=cells.get(key)||[];for(const n of list){if(checked.has(n+':'+k))continue;checked.add(n+':'+k);const f=edges[n];if(e.i===f.i||e.i===f.j||e.j===f.i||e.j===f.j)continue;const dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,ex=f.b.x-f.a.x,ey=f.b.y-f.a.y,cross=dx*ey-dy*ex;if(Math.abs(cross)<1e-8)continue;const ax=f.a.x-e.a.x,ay=f.a.y-e.a.y,t=(ax*ey-ay*ex)/cross,u=(ax*dy-ay*dx)/cross;assert.ok(!(t>1e-6&&t<1-1e-6&&u>1e-6&&u<1-1e-6),'unrelated paths cannot cross');}list.push(k);cells.set(key,list);
+  }}
+});
+test('a shared falling front physically forks to two branches and replaces duplicated gate layouts',()=>{
+  const b=D.build(D.demo());assert.ok(b.sharedBranches>0);assert.ok(b.bones.length<b.originalBoneCount);assert.ok(b.bones.some(p=>p.next.length>1&&p.contacts[0].length>1),'one falling domino reaches both branch starts');
+  for(let row=0;row<8;row++){const sim=new D.Simulator(b);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();const r=sim.run(),sum=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(r.outputs.map(p=>p.value),[sum&1,sum>>1]);}
+});
