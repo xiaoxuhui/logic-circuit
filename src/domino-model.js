@@ -150,7 +150,7 @@
   function distributeSources(board){
     const sources=[...board.inputs,...board.delays],leaves=sources.flatMap((p,index)=>p.pins.map(pin=>({index,pin,y:board.bones[pin].y}))).sort((a,b)=>a.y-b.y),bones=board.bones;
     if(!leaves.length)return;
-    const crossover=buildCrossover(),pitch=800,height=2500,right=-2000,order=sources.map((_,i)=>i),modules=board.modules.filter(p=>!['input','delay'].includes(p.type));
+    const crossover=buildCrossover(),pitch=800,height=2500,right=-2000,order=sources.map((_,i)=>i).filter(i=>sources[i].pins.length),modules=board.modules.filter(p=>!['input','delay'].includes(p.type));
     order.push(...order.splice(order.indexOf(leaves[0].index),1));
     const add=(x,y,angle=Math.PI/2,kind='wire')=>{const id=bones.length;bones.push({x,y,angle,kind,next:[]});return id;};
     const connect=(from,to,via=[])=>{let previous=from;for(const p of curvedPath([bones[from],...via,bones[to]]).slice(1,-1)){const id=add(p.x,p.y,p.angle);bones[previous].next.push(id);previous=id;}bones[previous].next.push(to);};
@@ -179,15 +179,17 @@
       for(let i=0;i<pins.length;i++)if(i!==pair&&i!==pair+1)bypass(pins[i],ends[i],bypassAmplitude,i<pair?-1:1);
       modules.push({x:mid,y:y+height/2,label:'三异或交叉器',type:'gate'});[order[pair],order[pair+1]]=[order[pair+1],order[pair]];pins=ends;y+=height;crossings++;
     }
+    const remaining=new Map();for(const leaf of leaves)remaining.set(leaf.index,(remaining.get(leaf.index)||0)+1);
     for(const leaf of leaves){
+      const retire=remaining.get(leaf.index)===1;
       let position=order.indexOf(leaf.index);while(position<order.length-1){stage(position);position++;}
       const tapY=leaf.y-200;if(tapY<y+200)throw Error('通用分岔线路间距不足');
       pins=pins.map((pin,i)=>{const next=add(x(i),tapY);connect(pin,next);return next;});y=tapY;
-      const next=pins.map((pin,i)=>{const p=bones[pin],head=add(p.x-7,p.y+18,Math.PI/2+Math.PI/5),out=add(p.x,p.y+180);p.next.push(head);connect(head,out,[{x:p.x-55,y:p.y+70},{x:p.x-55,y:p.y+130}]);return out;});
-      const pin=pins.at(-1),p=bones[pin],head=add(p.x+7,p.y+18,Math.PI/2-Math.PI/5);p.next.push(head);connect(head,leaf.pin,[{x:p.x+55,y:p.y+70},{x:-900,y:p.y+70},{x:-900,y:leaf.y}]);pins=next;y+=180;
+      const next=pins.map((pin,i)=>{if(retire&&i===pins.length-1)return null;const p=bones[pin],head=add(p.x-7,p.y+18,Math.PI/2+Math.PI/5),out=add(p.x,p.y+180);p.next.push(head);connect(head,out,[{x:p.x-55,y:p.y+70},{x:p.x-55,y:p.y+130}]);return out;});
+      const pin=pins.at(-1),p=bones[pin],head=add(p.x+7,p.y+18,Math.PI/2-Math.PI/5);p.next.push(head);connect(head,leaf.pin,[{x:p.x+55,y:p.y+70},{x:-900,y:p.y+70},{x:-900,y:leaf.y}]);pins=retire?next.slice(0,-1):next;if(retire)order.pop();remaining.set(leaf.index,remaining.get(leaf.index)-1);y+=180;
       if(bones.length>1000000)throw Error('单源分岔布局超过一百万张骨牌');
     }
-    board.modules=modules;board.crossovers=crossings;board.sharedBranches=leaves.length;board.singleOrigin=true;
+    board.modules=modules;board.crossovers=crossings;board.sharedBranches=leaves.length-new Set(leaves.map(p=>p.index)).size;board.singleOrigin=true;
     const probe=new Simulator({...board,clocks:[]}),arrivals=new Map(),leafIds=new Set(leaves.map(p=>p.pin));probe.inputs.forEach(p=>p.value=1);probe.delays.forEach(p=>p.value=1);contacts(bones);probe.reset();while(!probe.complete){probe.step();for(const [id,state] of probe.changes)if(state===1&&leafIds.has(id)&&!arrivals.has(id))arrivals.set(id,probe.tick);probe.changes=[];}if(arrivals.size!==leafIds.size)throw Error('通用分岔有输入尚未接通');
     const count=board.originalBoneCount,indegree=new Int32Array(count),ready=new Float64Array(count).fill(1),edges=bones.slice(0,count).map(p=>p.next.filter(id=>id<count).map(id=>[id,1]));for(const [id,tick] of arrivals)ready[id]=tick;for(const c of board.clocks)edges[c.after].push([c.pin,4]);for(const list of edges)for(const [id] of list)indegree[id]++;
     const queue=[];for(let i=0;i<count;i++)if(!indegree[i])queue.push(i);for(let i=0;i<queue.length;i++)for(const [next,weight] of edges[queue[i]]){ready[next]=Math.max(ready[next],ready[queue[i]]+weight);if(!--indegree[next])queue.push(next);}if(queue.length!==count)throw Error('通用分岔不能形成无延迟反馈');for(const c of board.clocks)c.at=ready[c.pin];board.endAt=Math.max(...board.clocks.map(c=>c.at),1)+bones.length;
