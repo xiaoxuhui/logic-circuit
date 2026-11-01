@@ -228,7 +228,7 @@
   function buildGate(type){
     if(type==='routing')return buildRouting();
     if(type==='cross')return buildCrossover();
-    if(!['or','xor'].includes(type))throw Error('未知骨牌基础门');const bones=[],modules=[],inputs=[],outputs=[],point=(x,y)=>({x,y});
+    if(!['or','xor'].includes(type))throw Error('未知骨牌基础门');let outputMerge=null;const bones=[],modules=[],inputs=[],outputs=[],point=(x,y)=>({x,y});
     const add=(p,kind='wire',angle=0)=>{const id=bones.length;bones.push({...p,kind,angle,next:[]});return id;};
     const path=(ps,kind='wire')=>{const ids=curvedPath(ps).map(p=>add(p,kind,p.angle));for(let i=1;i<ids.length;i++)bones[ids[i-1]].next.push(ids[i]);return ids;};
     const out=add(point(210,0),'output');outputs.push({id:'Q',label:'Q',bit:0,pin:out});modules.push({...bones[out],label:'Q',type:'output'});
@@ -237,14 +237,16 @@
     }else{
       for(const [i,ps] of [[point(-140,0),point(-18,0)],[point(0,140),point(0,18)]].entries()){const ids=path(ps);inputs.push({id:i?'B':'A',label:i?'B':'A',bit:0,value:0,pins:[ids[0]]});modules.push({...bones[ids[0]],label:i?'B':'A',type:'input'});}
       const bridge=add(point(0,0),'bridge',Math.PI/4),reach=18/Math.SQRT2;
-      const plus=path([point(reach,reach),point(65,175),point(145,175),point(190,10),point(210,0)]);
-      const minus=path([point(-reach,-reach),point(-50,-50),point(-50,-100),point(145,-100),point(190,-10),point(210,0)]);bones[minus[0]].angle=Math.PI/4;
+      // Matched routes arrive in 38 contacts; both final lanes push the OR junction forwards.
+      const plus=path([point(reach,reach),point(65,162),point(95,162),point(120,70),point(110,7),point(152,7)]);
+      const minus=path([point(-reach,-reach),point(-50,-50),point(-50,-97),point(100,-97),point(120,-55),point(110,-7),point(152,-7)]);bones[minus[0]].angle=Math.PI/4;
+      const merge=add(point(170,0),'junction'),heads=[plus.at(-1),minus.at(-1)],stem=path([point(170+40/3,0),point(210,0)]);for(const id of heads){bones[id].angle=0;bones[id].next.push(merge);}bones[merge].next.push(stem[0]);outputMerge={pin:merge,inputs:heads};modules.push({x:170,y:0,label:'或门',type:'gate'});
       bones[bridge].next.push(plus[0]);modules.push({x:0,y:-5,label:'异或门',type:'gate'});
     }
     // Coincident terminal samples are one physical domino, shared by both lanes.
     const duplicates=new Set(bones.flatMap((b,i)=>i!==out&&Math.hypot(b.x-210,b.y)<1e-6?[i]:[]));for(const b of bones)b.next=b.next.map(i=>duplicates.has(i)?out:i);
-    const map=new Map(),kept=[];for(let i=0;i<bones.length;i++)if(!duplicates.has(i)){map.set(i,kept.length);kept.push(bones[i]);}for(const b of kept)b.next=b.next.map(i=>map.get(i));for(const p of inputs)p.pins=p.pins.map(i=>map.get(i));outputs[0].pin=map.get(out);contacts(kept);
-    return {bones:kept,modules,inputs,outputs,delays:[],clocks:[],bounds:{minX:-180,minY:-155,maxX:265,maxY:235},endAt:kept.length+4,gateCount:1,gateTitle:type==='or'?'或门':'异或门',sharedBranches:0};
+    const map=new Map(),kept=[];for(let i=0;i<bones.length;i++)if(!duplicates.has(i)){map.set(i,kept.length);kept.push(bones[i]);}for(const b of kept)b.next=b.next.map(i=>map.get(i));for(const p of inputs)p.pins=p.pins.map(i=>map.get(i));outputs[0].pin=map.get(out);if(outputMerge)outputMerge={pin:map.get(outputMerge.pin),inputs:outputMerge.inputs.map(id=>map.get(id))};contacts(kept);
+    return {bones:kept,modules,inputs,outputs,outputMerge,delays:[],clocks:[],bounds:{minX:-180,minY:-155,maxX:265,maxY:235},endAt:kept.length+4,gateCount:1,gateTitle:type==='or'?'或门':'异或门',sharedBranches:0};
   }
   function buildCrossover(options={}){
     const delays={rootA:0,rootB:0,a:0,b:0,t2:0,t3:0};

@@ -56,6 +56,13 @@ test('native OR and crossing XOR are computed by contact, with simultaneous oppo
   }
   assert.throws(()=>D.buildGate('unknown'),/未知/);
 });
+
+test('the stage after the XOR crossing is a forward OR merge, including simultaneous high inputs',()=>{
+  const board=D.buildGate('xor'),merge=board.outputMerge;assert.ok(merge);assert.equal(board.bones.filter(p=>p.kind==='bridge').length,1,'only the first stage cancels opposite impulses');
+  for(const pin of merge.inputs)assert.ok(board.bones[pin].contacts[0].some(([id,direction])=>id===merge.pin&&direction===1),'both surviving lanes push the merge forwards');
+  for(let row=0;row<4;row++){const sim=new D.Simulator({...board,inputs:merge.inputs.map((pin,i)=>({id:'lane'+i,pins:[pin],value:row>>i&1}))});const result=sim.run();assert.equal(result.outputs[0].value,Number(row!==0));if(row===3)assert.equal(sim.states[merge.pin],1,'two high lanes merge instead of cancelling at a second crossing');}
+  const times=[1,2].map(row=>{const sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();return sim.run().tick;});assert.equal(times[0],times[1],'both XOR routes retain the same propagation time');
+});
 test('three physical XORs swap independent signals from exactly one A and one B origin, including 11',()=>{
   const b=D.buildGate('cross');assert.equal(b.gateCount,3);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1]);assert.equal(b.sharedBranches,3);
   for(let row=0;row<4;row++){const sim=new D.Simulator(b);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();assert.deepEqual(sim.run().outputs.map(p=>p.value),[row>>1&1,row&1]);}
