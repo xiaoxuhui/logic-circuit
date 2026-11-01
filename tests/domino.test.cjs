@@ -33,7 +33,7 @@ test('combinational feedback is rejected instead of inventing a computed result'
   const s=nand();s.wires=[wire('loop','g','g'),wire('q','g','o')];assert.throws(()=>D.build(s),/反馈环/);assert.equal(new D.Simulator(D.build({version:1,nodes:[],wires:[],definitions:{}})).run().outputs.length,0);
 });
 test('every intended link can physically touch; removing contact stops propagation rather than jumping a gap',()=>{
-  const board=D.build(D.demo());for(const a of board.bones)for(const id of a.next)assert.ok(D.hits(a,board.bones[id]),'next domino is within the falling footprint');
+  const board=D.build(D.demo());for(const a of board.bones)for(const id of a.next)assert.ok(D.hits(a,board.bones[id])||D.hits(a,board.bones[id],-1),'next domino is within a forward or reverse falling footprint');
   const source=nand();source.nodes[0].value=1;source.nodes[1].value=1;const b=D.build(source);assert.equal(new D.Simulator(b).run().outputs[0].value,0);
   const bridge=b.bones.findIndex(p=>p.kind==='bridge');assert.ok(b.bones.some(p=>p.kind==='knock'&&p.contacts[0].some(([id,dir])=>id===bridge&&dir===-1)),'data physically pushes the bridge in reverse');
   const s=nand();s.nodes[0].value=0;s.nodes[1].value=1;const normal=D.build(s);assert.equal(new D.Simulator(normal).run().outputs[0].value,1);
@@ -46,7 +46,7 @@ test('separate domino paths do not cross between connected endpoints',()=>{
   }}
 });
 test('a shared falling front physically forks to two branches and replaces duplicated gate layouts',()=>{
-  const b=D.build(D.demo());assert.ok(b.sharedBranches>0);assert.ok(b.bones.length<b.originalBoneCount);assert.ok(b.bones.some(p=>p.next.length>1&&p.contacts[0].length>1),'one falling domino reaches both branch starts');
+  const b=D.build(D.demo());assert.ok(b.sharedBranches>0);assert.ok(b.bones.length<D.buildTree(D.demo()).bones.length);assert.ok(b.bones.some(p=>p.next.length>1&&p.contacts[0].length>1),'one falling domino reaches both branch starts');
   for(let row=0;row<8;row++){const sim=new D.Simulator(b);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();const r=sim.run(),sum=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(r.outputs.map(p=>p.value),[sum&1,sum>>1]);}
 });
 test('native OR and crossing XOR are computed by contact, with simultaneous opposing impulses resolved independently of queue order',()=>{
@@ -64,4 +64,19 @@ test('A, B and carry routing has three single origins and a physical carry fork,
   const b=D.buildGate('routing');assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(b.inputs[2].label,'进位 C_in');
   for(const p of b.bones)for(const i of p.next)assert.ok(D.hits(p,b.bones[i])||D.hits(p,b.bones[i],-1),'every connected route can touch the next tile');
   for(let row=0;row<8;row++){const s=new D.Simulator(b);s.inputs.forEach((p,i)=>p.value=row>>i&1);s.reset();assert.deepEqual(s.run().outputs.map(p=>p.value),[row>>1&1,row&1,row>>2&1,row>>2&1]);}
+});
+test('the actual full-adder converter uses three physical origins, fewer tiles and exact min/max input statistics',()=>{
+  const source=D.demo(),before=JSON.stringify(source),b=D.build(source);assert.equal(b.singleOrigin,true);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(b.bones.filter(p=>p.kind==='input').length,3);assert.ok(b.bones.length<D.buildTree(source).bones.length);
+  const stats=D.analyzeInputs(b);assert.equal(stats.minSteps,886);assert.equal(stats.maxSteps,1263);assert.deepEqual(stats.minInputs,[[0,0,0]]);assert.deepEqual(stats.maxInputs,[[1,1,0],[1,1,1]]);
+  for(const [patterns,steps] of [[stats.minInputs,stats.minSteps],[stats.maxInputs,stats.maxSteps]])for(const values of patterns){const s=new D.Simulator(b);s.inputs.forEach((p,i)=>p.value=values[i]);s.reset();assert.equal(s.run().tick,steps);}assert.equal(JSON.stringify(source),before);
+});
+test('packaged and bus full adders are recognized by function, preserving names, bits, port order and original state',()=>{
+  const def=C.makeDefinition(D.demo(),'Full adder'),source={version:1,definitions:{fa:def},nodes:[node('cin','input',0,320,{label:'进位',value:1}),node('a','input',0,0,{label:'A'}),node('b','input',0,160,{label:'B'}),node('fa','custom',300,0,{def:'fa'}),node('carry','output',600,160,{label:'Carry'}),node('sum','output',600,0,{label:'Sum'})],wires:[wire('a','a','fa'),wire('b','b','fa',1),wire('c','cin','fa',2),wire('s','fa','sum'),{id:'carry',a:{node:'fa',dir:'out',port:1},b:{node:'carry',dir:'in',port:0}}]},before=JSON.stringify(source),board=D.build(source);assert.equal(board.singleOrigin,true);assert.deepEqual(board.inputs.map(p=>p.label),['A','B','进位']);assert.deepEqual(board.outputs.map(p=>p.label),['Carry','Sum']);for(let row=0;row<8;row++){const s=new D.Simulator(board);s.inputs.forEach((p,i)=>p.value=row>>i&1);s.reset();const total=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(s.run().outputs.map(p=>p.value),[total>>1,total&1]);}assert.equal(JSON.stringify(source),before);
+  const bus={version:1,definitions:{fa:def},nodes:[node('abc','input',0,0,{bits:3,value:5}),node('split','splitter',200,0,{bits:3}),node('fa','custom',400,0,{def:'fa'}),node('hub','hub',600,0,{bits:2}),node('out','output',800,0,{bits:2})],wires:[wire('abc','abc','split'),...Array.from({length:3},(_,port)=>({id:'i'+port,a:{node:'split',dir:'out',port},b:{node:'fa',dir:'in',port}})),...Array.from({length:2},(_,port)=>({id:'o'+port,a:{node:'fa',dir:'out',port},b:{node:'hub',dir:'in',port}})),wire('q','hub','out')]};const b=D.build(bus);assert.equal(b.singleOrigin,true);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);const s=new D.Simulator(b);assert.deepEqual(s.run().outputs.map(p=>p.value),[1,0]);
+});
+test('full-adder recognition checks all input rows instead of trusting a name or the current output',()=>{
+  const source=D.demo();source.name='Full adder';source.wires[0].a.node='b';assert.notEqual(D.build(source).singleOrigin,true);
+});
+test('step analysis leaves a non-adder board unchanged and rejects an unbounded input search',()=>{
+  const b=D.buildGate('or'),before=JSON.stringify(b),r=D.analyzeInputs(b);assert.equal(r.minSteps,1);assert.deepEqual(r.minInputs,[[0,0]]);assert.ok(r.maxSteps>r.minSteps);assert.equal(JSON.stringify(b),before);assert.throws(()=>D.analyzeInputs({inputs:Array(13).fill({}),bones:[],delays:[]}),/12位/);
 });
