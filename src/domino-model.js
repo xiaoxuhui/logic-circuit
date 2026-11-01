@@ -5,7 +5,7 @@
   if(typeof importScripts==='function'){
     let sim,timer=null;const stop=()=>{clearInterval(timer);timer=null;};
     const send=(reset=false)=>{const changes=Int32Array.from(sim.changes.flat());sim.changes=[];root.postMessage({status:sim.status(),changes,reset,running:!!timer},[changes.buffer]);};
-    root.onmessage=e=>{try{const d=e.data;if(d.type==='build'){stop();const board=api.build(d.state);sim=new api.Simulator(board);root.postMessage({board:{bones:board.bones.map(({x,y,angle,kind})=>({x,y,angle,kind})),modules:board.modules,bounds:board.bounds,gateCount:board.gateCount,delayCount:board.delays.length,sourceName:d.name||'当前电路'}});send(true);}
+    root.onmessage=e=>{try{const d=e.data;if(d.type==='build'){stop();const board=d.gate?api.buildGate(d.gate):api.build(d.state);sim=new api.Simulator(board);root.postMessage({board:{bones:board.bones.map(({x,y,angle,kind})=>({x,y,angle,kind})),modules:board.modules,bounds:board.bounds,gateCount:board.gateCount,gateTitle:board.gateTitle||'与非门',delayCount:board.delays.length,sourceName:d.name||'当前电路'}});send(true);}
       else if(sim){if(d.type==='step'){stop();sim.step();send();}else if(d.type==='run'){stop();if(d.value&&!sim.complete)timer=setInterval(()=>{sim.step();if(sim.complete)stop();send();},Math.max(8,Math.min(1000,Number(d.ms)||80)));send();}else if(d.type==='reset'){stop();sim.reset();send(true);}else if(d.type==='input'){stop();sim.setInput(d.id,d.value);send(true);}else if(d.type==='next'){stop();sim.nextCycle();send(true);}}}catch(error){stop();root.postMessage({error:error.message});}};
   }
 })(typeof globalThis!=='undefined'?globalThis:this,function(C){
@@ -147,17 +147,80 @@
     constructor(board){this.board=board;this.inputs=board.inputs.map(p=>({...p}));this.delays=board.delays.map(p=>({...p}));this.cycle=1;this.reset();}
     schedule(id,at,direction=1){if(!this.pending.has(at))this.pending.set(at,[]);this.pending.get(at).push([id,direction]);}
     reset(){this.tick=0;this.states=new Uint8Array(this.board.bones.length);this.changes=[];this.pending=new Map();this.toppled=0;this.complete=false;for(const p of [...this.inputs,...this.delays])if(p.value)for(const pin of p.pins||[p.pin])this.schedule(pin,1);for(const c of this.board.clocks)this.schedule(c.pin,c.at);}
-    step(){if(this.complete)return;this.tick++;const list=this.pending.get(this.tick)||[];this.pending.delete(this.tick);for(const [id,direction] of list){if(this.states[id])continue;this.states[id]=direction===1?1:2;this.changes.push([id,this.states[id]]);this.toppled++;const b=this.board.bones[id];for(const [next,dir] of b.contacts[direction===1?0:1])this.schedule(next,this.tick+1,dir);}this.complete=this.tick>=this.board.endAt&&this.pending.size===0;}
+    step(){if(this.complete)return;this.tick++;const list=this.pending.get(this.tick)||[],impulses=new Map();this.pending.delete(this.tick);for(const [id,direction] of list)if(!this.states[id])impulses.set(id,(impulses.get(id)||0)+direction);for(const [id,impulse] of impulses){if(!impulse)continue;const direction=Math.sign(impulse);this.states[id]=direction===1?1:2;this.changes.push([id,this.states[id]]);this.toppled++;const b=this.board.bones[id];for(const [next,dir] of b.contacts[direction===1?0:1])this.schedule(next,this.tick+1,dir);}this.complete=this.tick>=this.board.endAt&&this.pending.size===0;}
     run(){while(!this.complete)this.step();return this.status();}
     setInput(id,value){const p=this.inputs.find(p=>p.id===id);if(!p||![0,1].includes(value))throw Error('骨牌输入必须是0或1');p.value=value;this.reset();}
     nextCycle(){if(!this.complete)throw Error('请先完成本轮推倒，再采样延迟并进入下一轮');const values=this.delays.map(p=>Number(this.states[p.target]===1));this.delays.forEach((p,i)=>p.value=values[i]);this.cycle++;this.reset();}
     status(){return {tick:this.tick,endAt:this.board.endAt,cycle:this.cycle,complete:this.complete,toppled:this.toppled,total:this.states.length,sharedBranches:this.board.sharedBranches||0,savedBones:this.board.savedBones||0,inputs:this.inputs.map(({id,label,bit,value})=>({id,label,bit,value})),delays:this.delays.map(p=>({id:p.id,label:p.label,value:p.value,next:this.complete?Number(this.states[p.target]===1):null})),outputs:this.board.outputs.map(p=>({id:p.id,label:p.label,bit:p.bit,value:this.complete?Number(this.states[p.pin]===1):null}))};}
   }
+  function buildGate(type){
+    if(type==='routing')return buildRouting();
+    if(type==='cross')return buildCrossover();
+    if(!['or','xor'].includes(type))throw Error('未知骨牌基础门');const bones=[],modules=[],inputs=[],outputs=[],point=(x,y)=>({x,y});
+    const add=(p,kind='wire',angle=0)=>{const id=bones.length;bones.push({...p,kind,angle,next:[]});return id;};
+    const path=(ps,kind='wire')=>{const ids=curvedPath(ps).map(p=>add(p,kind,p.angle));for(let i=1;i<ids.length;i++)bones[ids[i-1]].next.push(ids[i]);return ids;};
+    const out=add(point(210,0),'output');outputs.push({id:'Q',label:'Q',bit:0,pin:out});modules.push({...bones[out],label:'Q',type:'output'});
+    if(type==='or'){
+      for(const [i,sign] of [-1,1].entries()){const ids=path([point(-140,sign*65),point(-40,sign*65),point(145,sign*35),point(190,sign*10),point(210,0)]);inputs.push({id:i?'B':'A',label:i?'B':'A',bit:0,value:0,pins:[ids[0]]});modules.push({...bones[ids[0]],label:i?'B':'A',type:'input'});}
+    }else{
+      for(const [i,ps] of [[point(-140,0),point(-18,0)],[point(0,140),point(0,18)]].entries()){const ids=path(ps);inputs.push({id:i?'B':'A',label:i?'B':'A',bit:0,value:0,pins:[ids[0]]});modules.push({...bones[ids[0]],label:i?'B':'A',type:'input'});}
+      const bridge=add(point(0,0),'bridge',Math.PI/4),reach=18/Math.SQRT2;
+      const plus=path([point(reach,reach),point(65,175),point(145,175),point(190,10),point(210,0)]);
+      const minus=path([point(-reach,-reach),point(-50,-50),point(-50,-100),point(145,-100),point(190,-10),point(210,0)]);bones[minus[0]].angle=Math.PI/4;
+      bones[bridge].next.push(plus[0]);modules.push({x:0,y:-5,label:'异或门',type:'gate'});
+    }
+    // Coincident terminal samples are one physical domino, shared by both lanes.
+    const duplicates=new Set(bones.flatMap((b,i)=>i!==out&&Math.hypot(b.x-210,b.y)<1e-6?[i]:[]));for(const b of bones)b.next=b.next.map(i=>duplicates.has(i)?out:i);
+    const map=new Map(),kept=[];for(let i=0;i<bones.length;i++)if(!duplicates.has(i)){map.set(i,kept.length);kept.push(bones[i]);}for(const b of kept)b.next=b.next.map(i=>map.get(i));for(const p of inputs)p.pins=p.pins.map(i=>map.get(i));outputs[0].pin=map.get(out);contacts(kept);
+    return {bones:kept,modules,inputs,outputs,delays:[],clocks:[],bounds:{minX:-180,minY:-155,maxX:265,maxY:235},endAt:kept.length+4,gateCount:1,gateTitle:type==='or'?'或门':'异或门',sharedBranches:0};
+  }
+  function buildCrossover(){
+    const delays={rootA:0,rootB:0,a:0,b:0,t2:0,t3:0};
+    function assemble(){
+      const bones=[],modules=[],centers=[],units=[];
+      for(const [index,[x,y]] of [[0,0],[500,-400],[500,400]].entries()){
+        const unit=buildGate('xor'),offset=bones.length,sign=index===2?-1:1;for(const p of unit.bones)bones.push({...p,x:p.x+x,y:p.y*sign+y,angle:p.angle*sign,next:p.next.map(id=>id+offset)});modules.push({x,y,label:'异或门',type:'gate'});centers.push(offset+unit.bones.findIndex(p=>p.kind==='bridge'));units.push({a:offset+unit.inputs[0].pins[0],b:offset+unit.inputs[1].pins[0],out:offset+unit.outputs[0].pin});
+      }
+      const add=(x,y,angle=0,kind='wire')=>{const id=bones.length;bones.push({x,y,angle,kind,next:[]});return id;};
+      const connect=(from,to,via)=>{const ps=curvedPath([bones[from],...via.map(([x,y])=>({x,y})),bones[to]]).slice(1,-1);let previous=from;for(const p of ps){const id=add(p.x,p.y,p.angle);bones[previous].next.push(id);previous=id;}bones[previous].next.push(to);};
+      const fork=(id,y)=>{const upper=add(-702,y-7,-Math.PI/5),lower=add(-702,y+7,Math.PI/5);bones[id].next.push(upper,lower);return [upper,lower];};
+      const a=add(-720,-400,0,'input'),b=add(-720,400,0,'input'),[au,ad]=fork(a,-400),[bu,bd]=fork(b,400);
+      connect(ad,units[0].a,[[-650,-340],[-650,-200],[-650-delays.rootA,-200],[-650-delays.rootA,-100],[-200,-100],[-200,0]]);
+      connect(bu,units[0].b,[[-650,340],[-650,240],[-620-delays.rootB,240],[-620-delays.rootB,200],[0,200]]);
+      connect(au,units[1].a,[[-650,-450],[-650,-450-delays.a],[-100,-450-delays.a],[-100,-400]]);
+      connect(bd,units[2].a,[[-650,450],[-650,450+delays.b],[-100,450+delays.b],[-100,400]]);
+      const t=units[0].out,tu=add(bones[t].x+18,-7,-Math.PI/5),td=add(bones[t].x+18,7,Math.PI/5);bones[t].next.push(tu,td);
+      connect(tu,units[1].b,[[280,-40],[650+delays.t2,-40],[650+delays.t2,-180],[500,-180]]);
+      connect(td,units[2].b,[[280,40],[650+delays.t3,40],[650+delays.t3,180],[500,180]]);
+      modules.push({x:-720,y:-400,label:'A',type:'input'},{x:-720,y:400,label:'B',type:'input'},{x:710,y:-400,label:'B · 预接输入',type:'output'},{x:710,y:400,label:'A · 预接输入',type:'output'});
+      contacts(bones);return {bones,modules,centers,inputs:[{id:'A',label:'A',bit:0,value:0,pins:[a]},{id:'B',label:'B',bit:0,value:0,pins:[b]}],outputs:[{id:'B-out',label:'B',bit:0,pin:units[1].out},{id:'A-out',label:'A',bit:0,pin:units[2].out}],delays:[],clocks:[],bounds:{minX:-800-Math.max(delays.rootA,delays.rootB),minY:-560-delays.a,maxX:980+Math.max(delays.t2,delays.t3),maxY:Math.max(750,560+delays.b)},endAt:bones.length+8,gateCount:3,gateTitle:'异或门',sharedBranches:3};
+    }
+    function trace(board,row){const sim=new Simulator(board),arrivals=board.centers.map(()=>({}));sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();while(!sim.complete){for(const [id,d] of sim.pending.get(sim.tick+1)||[]){const index=board.centers.indexOf(id);if(index>=0&&arrivals[index][d]===undefined)arrivals[index][d]=sim.tick+1;}sim.step();}return {arrivals,values:sim.status().outputs.map(p=>p.value)};}
+    let board;
+    for(let iteration=0;iteration<50;iteration++){
+      board=assemble();const a=trace(board,1),b=trace(board,2),rootA=a.arrivals[0][1],rootB=b.arrivals[0][-1];
+      if(rootA===undefined||rootB===undefined)throw Error('交叉器的输入连接未接通');
+      if(rootA!==rootB){delays[rootA<rootB?'rootA':'rootB']+=Math.max(1,Math.abs(rootA-rootB)*8);continue;}
+      let changed=false;for(const [sample,index,direct,trunk] of [[a,1,'a','t2'],[b,2,'b','t3']]){const pos=sample.arrivals[index][1],neg=sample.arrivals[index][-1];if(pos===undefined||neg===undefined)throw Error('交叉器的分岔连接未接通');if(pos!==neg){delays[pos<neg?direct:trunk]+=Math.max(1,Math.abs(pos-neg)*8);changed=true;}}
+      if(changed)continue;
+      if([0,1,2,3].every(row=>{const r=trace(board,row).values;return r[0]===(row>>1&1)&&r[1]===(row&1);}))return board;
+      throw Error('交叉器还未通过四种输入验证');
+    }
+    throw Error('交叉器的骨牌到达时间尚未对齐');
+  }
+  function buildRouting(){
+    const b=buildCrossover(),bones=b.bones,left=b.bounds.minX-140,bottom=b.bounds.maxY+140;
+    const add=(x,y,angle=0,kind='wire')=>{const id=bones.length;bones.push({x,y,angle,kind,next:[]});return id;};
+    const connect=(from,to,via)=>{let prev=from;for(const p of curvedPath([bones[from],...via.map(([x,y])=>({x,y})),bones[to]]).slice(1,-1)){const id=add(p.x,p.y,p.angle);bones[prev].next.push(id);prev=id;}bones[prev].next.push(to);};
+    const cin=add(-720,0,Math.PI,'input'),fork=add(800,bottom);connect(cin,fork,[[left,0],[left,bottom]]);
+    for(const sign of [-1,1]){const head=add(818,bottom+sign*7,sign*Math.PI/5),out=add(1100,bottom+sign*60,0,'output');bones[fork].next.push(head);connect(head,out,[[880,bottom+sign*60]]);b.outputs.push({id:'cin-'+sign,label:'进位 C_in · 预接 '+(sign<0?'1':'2'),bit:0,pin:out});b.modules.push({x:1100,y:bottom+sign*60,label:'C_in · 预接输入 '+(sign<0?'1':'2'),type:'output'});}
+    b.inputs.push({id:'Cin',label:'进位 C_in',bit:0,value:0,pins:[cin]});b.modules.push({x:-720,y:0,label:'进位 C_in',type:'input'});b.bounds={...b.bounds,minX:left-50,maxX:Math.max(b.bounds.maxX,1180),maxY:bottom+130};b.sharedBranches++;b.endAt=bones.length+8;contacts(bones);return b;
+  }
   function demo(){
     const nodes=[],wires=[];const n=(id,type,x,y,label)=>{nodes.push({id,type,x,y,label});return id;},w=(a,b,p=0)=>wires.push({id:'w'+wires.length,a:{node:a,dir:'out',port:0},b:{node:b,dir:'in',port:p}}),gate=(id,a,b,x,y)=>{n(id,'nand',x,y,'与非门');w(a,id);w(b,id,1);return id;};
-    n('a','input',0,0,'A');n('b','input',0,160,'B');n('cin','input',0,320,'进位输入');
+    n('a','input',0,0,'A');n('b','input',0,160,'B');n('cin','input',0,320,'进位 C_in');
     function xor(prefix,a,b,x,y){const t=gate(prefix+'n',a,b,x,y),u=gate(prefix+'u',a,t,x+180,y-60),v=gate(prefix+'v',b,t,x+180,y+70);return {out:gate(prefix+'o',u,v,x+360,y),both:t};}
     const ab=xor('ab','a','b',220,40),sum=xor('sum',ab.out,'cin',800,180),carry=gate('carry',ab.both,sum.both,1380,360);n('sumout','output',1600,0,'和 S');n('carryout','output',1600,180,'进位 C');w(sum.out,'sumout');w(carry,'carryout');return {version:1,nodes,wires,definitions:{}};
   }
-  return {flatten,curvedPath,build,Simulator,demo,hits,contacts,DIMENSIONS};
+  return {flatten,curvedPath,build,buildGate,buildCrossover,buildRouting,Simulator,demo,hits,contacts,DIMENSIONS};
 });

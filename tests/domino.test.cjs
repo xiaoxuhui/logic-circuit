@@ -49,3 +49,19 @@ test('a shared falling front physically forks to two branches and replaces dupli
   const b=D.build(D.demo());assert.ok(b.sharedBranches>0);assert.ok(b.bones.length<b.originalBoneCount);assert.ok(b.bones.some(p=>p.next.length>1&&p.contacts[0].length>1),'one falling domino reaches both branch starts');
   for(let row=0;row<8;row++){const sim=new D.Simulator(b);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();const r=sim.run(),sum=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(r.outputs.map(p=>p.value),[sum&1,sum>>1]);}
 });
+test('native OR and crossing XOR are computed by contact, with simultaneous opposing impulses resolved independently of queue order',()=>{
+  for(const type of ['or','xor'])for(let row=0;row<4;row++)for(const reverse of [false,true]){
+    const board=D.buildGate(type),sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();if(reverse)sim.pending.get(1)?.reverse();const r=sim.run();assert.equal(r.outputs[0].value,type==='or'?Number(row!==0):Number(row===1||row===2));
+    if(type==='xor'&&row===3){const bridge=board.bones.findIndex(b=>b.kind==='bridge');assert.equal(sim.states[bridge],0,'opposing simultaneous input fronts cancel at the shared tile');}
+  }
+  assert.throws(()=>D.buildGate('unknown'),/未知/);
+});
+test('three physical XORs swap independent signals from exactly one A and one B origin, including 11',()=>{
+  const b=D.buildGate('cross');assert.equal(b.gateCount,3);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1]);assert.equal(b.sharedBranches,3);
+  for(let row=0;row<4;row++){const sim=new D.Simulator(b);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();assert.deepEqual(sim.run().outputs.map(p=>p.value),[row>>1&1,row&1]);}
+});
+test('A, B and carry routing has three single origins and a physical carry fork, preserving all eight rows',()=>{
+  const b=D.buildGate('routing');assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(b.inputs[2].label,'进位 C_in');
+  for(const p of b.bones)for(const i of p.next)assert.ok(D.hits(p,b.bones[i])||D.hits(p,b.bones[i],-1),'every connected route can touch the next tile');
+  for(let row=0;row<8;row++){const s=new D.Simulator(b);s.inputs.forEach((p,i)=>p.value=row>>i&1);s.reset();assert.deepEqual(s.run().outputs.map(p=>p.value),[row>>1&1,row&1,row>>2&1,row>>2&1]);}
+});
