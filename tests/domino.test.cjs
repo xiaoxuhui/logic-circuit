@@ -9,9 +9,15 @@ test('rounded routes use smoothly changing tangents and contact-sized gaps throu
 });
 test('clocked domino NAND: four rows; side front removes actual bridge before trigger; source unchanged',()=>{
   for(let row=0;row<4;row++){const source=nand();source.nodes[0].value=row&1;source.nodes[1].value=row>>1;const before=JSON.stringify(source),board=D.build(source),sim=new D.Simulator(board);assert.equal(sim.status().outputs[0].value,null);assert.ok(board.bones.some(b=>b.kind==='bridge'));
-    const r=sim.run();assert.equal(r.outputs[0].value,Number(row!==3));assert.equal(board.bones.filter((b,i)=>b.kind==='bridge'&&sim.states[i]===2).length,(row&1)+(row>>1));assert.equal(JSON.stringify(source),before);
+    const r=sim.run();assert.equal(r.outputs[0].value,Number(row!==3));assert.equal(board.clocks.length,0);assert.equal(board.starts.length,1);assert.equal(JSON.stringify(source),before);
     const output=board.outputs[0].pin;assert.equal(sim.states[output],row===3?0:1);sim.reset();assert.equal(sim.toppled,0);assert.equal(sim.states.filter(Boolean).length,0);assert.equal(sim.run().outputs[0].value,Number(row!==3));
   }
+});
+
+test('constant one starts at tick one and reaches NOT triggers only through shared physical routes',()=>{
+  const board=D.build(nand());assert.equal(board.clocks.length,0);assert.equal(board.starts.length,1);assert.equal(board.starts[0].pins.length,1);assert.ok(board.crossovers>0);assert.ok(board.bones.some(p=>p.next.length>1&&p.contacts[0].length>1));const sim=new D.Simulator(board);assert.deepEqual([...sim.pending.keys()],[1]);assert.deepEqual(sim.pending.get(1),[[board.starts[0].pins[0],1]]);assert.equal(sim.run().outputs[0].value,1);
+  const root=board.bones[board.starts[0].pins[0]];root.x-=100000;D.contacts(board.bones);const cut=new D.Simulator(board);assert.equal(cut.run().outputs[0].value,0,'a severed constant-one route cannot be replaced by a timer');assert.equal(cut.tick,1);
+  const full=D.buildFullAdder();assert.equal(full.clocks.length,0);for(let row=0;row<8;row++){const s=new D.Simulator(full);s.inputs.forEach((p,i)=>p.value=row>>i&1);s.reset();assert.ok([...s.pending.keys()].every(t=>t===1),'even full-adder seeds come only from actual starting inputs');}
 });
 test('full adder computes all eight rows from toppling events, without core simulation',()=>{
   const old=C.simulate;C.simulate=()=>{throw Error('electronic simulation must not calculate domino results');};try{for(let row=0;row<8;row++){const source=D.demo();source.nodes.slice(0,3).forEach((n,i)=>n.value=row>>i&1);const r=new D.Simulator(D.build(source)).run(),sum=(row&1)+(row>>1&1)+(row>>2&1);assert.deepEqual(r.outputs.map(p=>p.value),[sum&1,sum>>1]);}}finally{C.simulate=old;}
@@ -74,7 +80,7 @@ test('A, B and carry routing has three single origins and a physical carry fork,
 });
 test('the actual full-adder converter uses three physical origins, fewer tiles and exact min/max input statistics',()=>{
   const source=D.demo(),before=JSON.stringify(source),b=D.build(source);assert.equal(b.singleOrigin,true);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(b.bones.filter(p=>p.kind==='input').length,3);assert.ok(b.bones.length<D.buildTree(source).bones.length);
-  const stats=D.analyzeInputs(b);assert.equal(stats.minSteps,886);assert.equal(stats.maxSteps,1263);assert.deepEqual(stats.minInputs,[[0,0,0]]);assert.deepEqual(stats.maxInputs,[[1,1,0],[1,1,1]]);
+  const stats=D.analyzeInputs(b);assert.equal(stats.minSteps,1);assert.equal(stats.maxSteps,1430);assert.deepEqual(stats.minInputs,[[0,0,0]]);assert.deepEqual(stats.maxInputs,[[1,1,0],[1,1,1]]);
   for(const [patterns,steps] of [[stats.minInputs,stats.minSteps],[stats.maxInputs,stats.maxSteps]])for(const values of patterns){const s=new D.Simulator(b);s.inputs.forEach((p,i)=>p.value=values[i]);s.reset();assert.equal(s.run().tick,steps);}assert.equal(JSON.stringify(source),before);
 });
 test('packaged and bus full adders are recognized by function, preserving names, bits, port order and original state',()=>{
@@ -82,7 +88,7 @@ test('packaged and bus full adders are recognized by function, preserving names,
   const bus={version:1,definitions:{fa:def},nodes:[node('abc','input',0,0,{bits:3,value:5}),node('split','splitter',200,0,{bits:3}),node('fa','custom',400,0,{def:'fa'}),node('hub','hub',600,0,{bits:2}),node('out','output',800,0,{bits:2})],wires:[wire('abc','abc','split'),...Array.from({length:3},(_,port)=>({id:'i'+port,a:{node:'split',dir:'out',port},b:{node:'fa',dir:'in',port}})),...Array.from({length:2},(_,port)=>({id:'o'+port,a:{node:'fa',dir:'out',port},b:{node:'hub',dir:'in',port}})),wire('q','hub','out')]};const b=D.build(bus);assert.equal(b.singleOrigin,true);assert.deepEqual(b.inputs.map(p=>p.pins.length),[1,1,1]);const s=new D.Simulator(b);assert.deepEqual(s.run().outputs.map(p=>p.value),[1,0]);
 });
 test('full-adder recognition checks all input rows instead of trusting a name or the current output',()=>{
-  const source=D.demo();source.name='Full adder';source.wires[0].a.node='b';assert.notEqual(D.build(source).gateTitle,'全加器');
+  const source=D.demo();source.name='Full adder';source.wires[0].a.node='b';const board=D.build(source);assert.notEqual(board.gateTitle,'全加器');assert.equal(board.clocks.length,0);for(let row=0;row<8;row++){const copy=C.clone(source);copy.nodes.filter(n=>n.type==='input').forEach((n,i)=>n.value=row>>i&1);const expected=C.simulate(copy),sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();assert.deepEqual(sim.run().outputs.map(p=>p.value),copy.nodes.filter(n=>n.type==='output').map(n=>expected.outputs[n.id][0]));}
 });
 test('step analysis leaves a non-adder board unchanged and rejects an unbounded input search',()=>{
   const b=D.buildGate('or'),before=JSON.stringify(b),r=D.analyzeInputs(b);assert.equal(r.minSteps,1);assert.deepEqual(r.minInputs,[[0,0]]);assert.ok(r.maxSteps>r.minSteps);assert.equal(JSON.stringify(b),before);assert.throws(()=>D.analyzeInputs({inputs:Array(13).fill({}),bones:[],delays:[]}),/12位/);
@@ -93,7 +99,7 @@ test('ordinary custom gates use single input origins, physical forks and synchro
   ['ab','ac','bc'].forEach((id,i)=>{inner.nodes.push(node(id,'nand',200,i*160),node('o'+id,'output',400,i*160));inner.wires.push(wire(id+'a',id[0],id),wire(id+'b',id[1],id,1),wire(id+'o',id,'o'+id));});
   const def=C.makeDefinition(inner,'three pairs'),source={version:1,definitions:{pairs:def},nodes:[...['a','b','c'].map((id,i)=>node(id,'input',0,i*160)),node('gate','custom',250,0,{def:'pairs'}),...['ab','ac','bc'].map((id,i)=>node('o'+id,'output',500,i*160))],wires:[...['a','b','c'].map((id,i)=>wire('i'+i,id,'gate',i)),...['ab','ac','bc'].map((id,i)=>({id:'o'+i,a:{node:'gate',dir:'out',port:i},b:{node:'o'+id,dir:'in',port:0}}))]},before=JSON.stringify(source);
   const old=C.simulate;let board;C.simulate=()=>{throw Error('custom domino routing must use physical propagation');};try{board=D.build(source);}finally{C.simulate=old;}
-  assert.deepEqual(board.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(board.bones.filter(p=>p.kind==='input').length,3);assert.ok(board.crossovers>0);assert.equal(board.sharedBranches,3,'each twice-used input needs exactly one distribution fork');assert.ok(board.bones.some(p=>p.next.length>1&&p.contacts[0].length>1));
+  assert.deepEqual(board.inputs.map(p=>p.pins.length),[1,1,1]);assert.equal(board.bones.filter(p=>p.kind==='input').length,3);assert.ok(board.crossovers>0);assert.equal(board.sharedBranches,8,'three data forks and five shared clock forks are physical');assert.ok(board.bones.some(p=>p.next.length>1&&p.contacts[0].length>1));
   for(const p of board.bones)for(const id of p.next)assert.ok(D.hits(p,board.bones[id])||D.hits(p,board.bones[id],-1));
   for(let row=0;row<8;row++){const sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();const expected=['ab','ac','bc'].map(id=>Number(!((row>>'abc'.indexOf(id[0])&1)&&(row>>'abc'.indexOf(id[1])&1))));assert.deepEqual(sim.run().outputs.map(p=>p.value),expected);}
   assert.equal(JSON.stringify(source),before);
