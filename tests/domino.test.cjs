@@ -31,6 +31,20 @@ test('delay feedback samples simultaneously only after a completed round; rearmi
   const source={version:1,definitions:{},nodes:[node('d','delay'),node('g','nand',250),node('o','output',500)],wires:[wire('a','d','g'),wire('b','d','g',1),wire('q','g','d'),wire('o','d','o')],delayState:{'root/d':1}},before=JSON.stringify(source),sim=new D.Simulator(D.build(source));assert.throws(()=>sim.nextCycle(),/先完成/);
   for(let cycle=0;cycle<6;cycle++){const r=sim.run();assert.equal(r.outputs[0].value,1-cycle%2);assert.equal(r.delays[0].next,cycle%2);sim.reset();assert.equal(sim.run().outputs[0].value,1-cycle%2);sim.nextCycle();}assert.equal(JSON.stringify(source),before);
 });
+
+test('visible A, B and fixed one origins are ordered vertically, with labels and unchanged contact logic',()=>{
+  const board=D.present(D.build(nand())),input=board.annotations.filter(p=>p.type==='input'),constant=board.annotations.find(p=>p.type==='constant');assert.deepEqual(input.map(p=>p.label),['A','B']);assert.ok(input[0].y<input[1].y&&input[1].y<constant.y);assert.equal(constant.label,'默认 1');assert.ok(board.annotations.some(p=>p.type==='output'));const first=board.bones.map(p=>[p.x,p.y,p.angle]);D.present(board);assert.deepEqual(board.bones.map(p=>[p.x,p.y,p.angle]),first);
+  for(let row=0;row<4;row++){const sim=new D.Simulator(board);sim.inputs.forEach((p,i)=>p.value=row>>i&1);sim.reset();assert.equal(sim.run().outputs[0].value,Number(row!==3));}
+});
+
+test('fixed zero inputs disappear before layout while true low controls remain switchable',()=>{
+  const high={version:1,definitions:{},nodes:[node('n','nand'),node('o','output',300)],wires:[wire('o','n','o')]},board=D.build(high);assert.ok(board.modules.every(p=>p.type!=='zero'));assert.ok(board.bones.every(p=>p.kind!=='knock'));assert.equal(board.starts.length,1);assert.equal(new D.Simulator(board).run().outputs[0].value,1);
+  const low=D.build({version:1,definitions:{},nodes:[node('o','output')],wires:[]});assert.equal(low.bones.length,1);assert.equal(low.bones[0].kind,'output');assert.equal(new D.Simulator(low).run().outputs[0].value,0);assert.equal(D.build(nand()).inputs.length,2);
+});
+
+test('delay signals can be edited and rearmed independently of ordinary inputs and source saves',()=>{
+  const source={version:1,definitions:{},nodes:[node('i','input',0,0,{value:0}),node('d','delay',240),node('o','output',480)],wires:[wire('i','i','d'),wire('o','d','o')],delayState:{'root/d':1}},before=JSON.stringify(source),board=D.present(D.build(source)),sim=new D.Simulator(board),id=sim.delays[0].id;assert.ok(board.annotations.some(p=>p.label==='延迟信号'));sim.setDelay(id,0);assert.equal(sim.tick,0);assert.equal(sim.run().outputs[0].value,0);sim.setDelay(id,1);assert.equal(sim.tick,0);assert.equal(sim.run().outputs[0].value,1);assert.equal(sim.status().delays[0].next,0);assert.throws(()=>sim.setDelay(id,2),/0或1/);assert.equal(sim.inputs[0].value,0);assert.equal(JSON.stringify(source),before);
+});
 test('unconnected inputs default low; forced values and reset/invalid inputs are handled independently',()=>{
   const s=nand();s.wires=[];const sim=new D.Simulator(D.build(s));assert.equal(sim.run().outputs[0].value,0);assert.throws(()=>sim.setInput('root/a:0',9),/0或1/);sim.setInput('root/a:0',1);assert.equal(sim.tick,0);
   const f=nand();f.nodes[0].value=1;f.nodes[1].value=1;f.wireOverrides={a:[0]};assert.equal(new D.Simulator(D.build(f)).run().outputs[0].value,1);
