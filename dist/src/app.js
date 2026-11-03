@@ -4,7 +4,7 @@
   const names={nand:'与非门',delay:'延迟线',input:'输入开关',output:'输出指示灯',hub:'集线器',splitter:'分线器'};
   const formatNames={unsigned:'无符号十进制',signed:'有符号十进制',hex:'十六进制'};
   const subtitles={nand:'NAND',delay:'ONE STEP DELAY',input:'SIGNAL INPUT',output:'SIGNAL OUTPUT',hub:'BUS PACK',splitter:'BUS UNPACK'};
-  const desc={delay:'先接收输入，下一步运行时才输出。点击“全部清零”后，所有延迟线输出为 0。',nand:'两个输入都是 1 时，输出为 0。',input:'点击开关设置输入。自动运行时下一刻生效；短期输入在采样后清零。',output:'实时显示输入端的信号。',hub:'顶部为最低位 b0，按位打包为总线。',splitter:'将总线拆为单比特，顶部为最低位 b0；输入不足时高位补零，超出时丢弃高位。',custom:'你封装的电路，拥有独立的内部逻辑。'};
+  const desc={delay:'先接收输入，下一步运行时才输出。点击“全部清零”后，所有延迟线输出为 0。',nand:'两个输入都是 1 时，输出为 0。',input:'点击开关设置输入。自动运行时下一刻生效。',output:'实时显示输入端的信号。',hub:'顶部为最低位 b0，按位打包为总线。',splitter:'将总线拆为单比特，顶部为最低位 b0；输入不足时高位补零，超出时丢弃高位。',custom:'你封装的电路，拥有独立的内部逻辑。'};
   let counter=0;const uid=prefix=>prefix+Date.now().toString(36)+(counter++).toString(36);
   const initial=()=>({version:1,nodes:[{id:uid('n'),type:'nand',x:0,y:0}],wires:[],definitions:{}});
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
@@ -16,7 +16,7 @@
   const pasteLayer=document.createElementNS('http://www.w3.org/2000/svg','g');pasteLayer.setAttribute('class','paste-preview');pasteLayer.setAttribute('data-paste-preview','');pasteLayer.style.display='none';$('world').append(pasteLayer);
   const placementPreview=document.createElement('div');placementPreview.className='placement-preview';placementPreview.hidden=true;placementPreview.setAttribute('aria-hidden','true');document.body.append(placementPreview);
   const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:n.type==='input'&&n.pulse?'短期输入':names[n.type]);
+  const title=n=>n.label||(n.type==='custom'?state.definitions[n.def].name:names[n.type]);
   const snapshot=()=>C.clone({version:1,nodes:state.nodes,wires:state.wires,definitions:state.definitions,delayState:state.delayState||{},displayFormat:state.displayFormat||'unsigned',wireOverrides:state.wireOverrides||{},scopedWireOverrides:state.scopedWireOverrides||{},...(gateEditor?{editorRoot:gateEditor.root}:{})});
   function toast(msg){$('toast').textContent=msg;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
   const backupKey='logic-workshop-refresh-backups-v1';
@@ -100,7 +100,7 @@
       else if(n.type==='custom')symbol=`<text x="${z.w/2}" y="${z.h/2+10}" text-anchor="middle" fill="#bca6dd" font-size="23">◇</text>`;
       else symbol=`<path d="M 65 38 L ${n.type==='hub'?87:65} ${z.h/2} L ${n.type==='hub'?65:87} ${z.h-20}" fill="none" stroke="#7dabc4" stroke-width="2"/>`;
       const multiIO=['input','output'].includes(n.type)&&(n.bits||1)>1;if(multiIO)symbol+=`<text class="decimal-summary" x="${z.w/2}" y="${z.h+17}" text-anchor="middle" aria-label="${formatNames[state.displayFormat||'unsigned']}">${C.formatValue(value,state.displayFormat)}</text>`;
-      return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><g transform="${C.rotationTransform(n,state.definitions)}"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="${z.w/2}" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="${z.w/2}" y="${z.h+(multiIO?35:15)}" text-anchor="middle">${escape(n.type==='input'&&n.pulse?'ONE STEP INPUT':n.type==='custom'?(sim.definitionModes[n.def]==='状态真值表'?'STATE TABLE':sim.definitionModes[n.def]==='真值表'?'TRUTH TABLE':'CUSTOM CIRCUIT'):subtitles[n.type])}</text></g></g>`;
+      return `<g class="node ${(selected?.type==='nodes'?selected.ids.includes(n.id):selected?.id===n.id)?'selected':''}" data-node="${n.id}" transform="translate(${n.x} ${n.y})"><g transform="${C.rotationTransform(n,state.definitions)}"><title>${escape(t)} · ${escape(desc[n.type])}</title><rect class="body" width="${z.w}" height="${z.h}" rx="9"/><text class="node-title" x="${z.w/2}" y="20" text-anchor="middle">${escape(short)}</text>${symbol}${ps.map(p=>{const bits=sim.portValues[C.key(p)],color=signalClass(bits)==='high'?'#91e6be':'#7c99ac';return `<g class="port" data-port="${p.port}" data-dir="${p.dir}" transform="translate(${p.x-n.x} ${p.y-n.y})"><title>${escape(p.label)} · ${p.width} 位 · ${signalText(bits)}</title><circle r="10" opacity="0"/><circle r="${p.width>1?5.5:4.5}" style="stroke:${color};fill:${signalClass(bits)==='high'?'#91e6be':'#17252e'}"/><text x="${p.dir==='in'?11:-11}" y="3" text-anchor="${p.dir==='in'?'start':'end'}">${escape(p.label.slice(0,9))}</text></g>`;}).join('')}<text class="node-subtitle" x="${z.w/2}" y="${z.h+(multiIO?35:15)}" text-anchor="middle">${escape(n.type==='custom'?(sim.definitionModes[n.def]==='状态真值表'?'STATE TABLE':sim.definitionModes[n.def]==='真值表'?'TRUTH TABLE':'CUSTOM CIRCUIT'):subtitles[n.type])}</text></g></g>`;
     }).join('');
   }
   function scopedCircuit(scope){
@@ -168,7 +168,7 @@
   function setWireTemporary(target,value){
     const {local}=scopedCircuit(target.scope),wire=local.wires.find(w=>w.id===target.id);if(!wire)return;
     const net=C.nets(local),group=net.wireNet.get(wire.id);
-    if(runTimer){pendingWires.set(target.scope+'/'+group,{owner:state,target:{...target},wire,value});wireInspectorTarget=target;render();toast('短期输入已排队，下一刻开始时生效');return;}
+    if(runTimer){pendingWires.set(target.scope+'/'+group,{owner:state,target:{...target},wire,value});wireInspectorTarget=target;render();toast('临时输入已排队，下一刻开始时生效');return;}
     pendingWires.delete(target.scope+'/'+group);applyWireTemporary(target,value,local,net,group);
   }
   function applyWireTemporary(target,value,local,net,group){
@@ -209,7 +209,6 @@
     if($('prop-bits'))$('prop-bits').onchange=e=>{const b=Number(e.target.value),min=['hub','splitter'].includes(n.type)?2:1;if(!Number.isInteger(b)||b<min||b>C.MAX_BITS){e.target.value=bits;toast('位宽请输入 '+min+'–'+C.MAX_BITS+' 的整数');return;}change(()=>resizeBits(n,b));toast('位宽已更新；请检查相连导线的位宽。');};
     if($('prop-bits'))$('prop-bits').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();e.target.blur();}};
     if($('prop-toggle'))$('prop-toggle').onclick=()=>toggle(n.id);
-    if(n.type==='input'){const row=document.createElement('label');row.className='property-row';row.innerHTML='<span>短期输入 · 下一步后清零</span><input id="prop-pulse" type="checkbox" '+(n.pulse?'checked':'')+'>';row.querySelector('input').onchange=e=>change(()=>n.pulse=e.target.checked);$('selection-panel').append(row);}
 
     if(window.innerWidth<=980){
       const panel=document.querySelector('.inspector'),close=document.createElement('button');close.className='inspector-close';close.textContent='×';close.title='关闭属性';close.onclick=()=>{selected=null;render();};panel.prepend(close);panel.querySelectorAll('.inspector-close').forEach((b,i)=>{if(i)b.remove();});
@@ -244,13 +243,12 @@
   function stopRunning(){runGeneration++;clearTimeout(runTimer);runTimer=null;$('auto-run').textContent='自动运行';$('auto-run').setAttribute('aria-pressed','false');}
   function advance(manual=false){
     if(expanded?.libraryView&&!hasWireForces()||gesture||placement||!manual&&activePointers.size||document.querySelector('dialog[open]'))return;
-    const record=manual||!!gateEditor&&(pendingInputs.size>0||state.nodes.some(n=>n.type==='input'&&n.pulse&&n.value)),before=record?snapshot():null;
+    const record=manual||!!gateEditor&&(pendingInputs.size>0),before=record?snapshot():null;
     for(const pending of pendingInputs.values())if(state.nodes.includes(pending.node))pending.node.value=C.packBits(C.bitArray(pending.value,pending.node.bits||1));
     pendingInputs.clear();
     for(const pending of pendingWires.values())if(pending.owner===state){try{const {local}=scopedCircuit(pending.target.scope);if(!local.wires.includes(pending.wire))continue;const net=C.nets(local);writeWireTemporary(pending.target,pending.value,net,net.wireNet.get(pending.target.id));}catch{}}
     pendingWires.clear();
     state.delayState=C.step(state);state.wireOverrides={};state.scopedWireOverrides={};
-    for(const node of state.nodes)if(node.type==='input'&&node.pulse)node.value=0;
     if(expanded)refreshExpanded();
     if(record&&!expanded?.libraryId)commit(before);else{render();save();}
   }
@@ -326,7 +324,7 @@
       selected=null;setMode('pan');render();fit();
     }catch(error){toast(error.message);}
   }
-  function placementNode(type,def){const pulse=type==='pulse';if(pulse)type='input';const n={id:uid('n'),type,x:0,y:0};if(type==='input'){n.value=0;if(pulse)n.pulse=true;}if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
+  function placementNode(type,def){const n={id:uid('n'),type,x:0,y:0};if(type==='input')n.value=0;if(type==='hub'||type==='splitter')n.bits=2;if(type==='custom')n.def=def;return n;}
   function previewPlacement(e){
     if(!placement)return;const g=placement,n=g.node,z=C.size(n,state.definitions),r=svg.getBoundingClientRect(),hit=document.elementFromPoint(e.clientX,e.clientY),inside=e.clientX>=r.left&&e.clientX<r.right&&e.clientY>=r.top&&e.clientY<r.bottom&&(hit===svg||svg.contains(hit)),scale=inside?camera.scale:1;
     g.inside=inside;g.point={clientX:e.clientX,clientY:e.clientY};g.moved=g.moved||Math.hypot(e.clientX-g.start.x,e.clientY-g.start.y)>5;

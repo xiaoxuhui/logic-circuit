@@ -8,12 +8,14 @@
     {id:'xor',name:'异或门',description:'两个输入不同时，输出为1。'},
     {id:'adder',name:'一位全加器',description:'A、B和进位相加，输出和与进位。'},
     {id:'oscillator',name:'时序振荡器 · 与非门＋延迟线',description:'按“下一步运行”让输出在0和1之间交替，也可以开启连续运行。'},
-    {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'}
+    {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'},
+    {id:'pulse',name:'短期输入 · 与非门＋延迟线',description:'4个与非门搭成异或门，将原输入与延迟一拍的输入比较。切换输入产生一个脉冲，点击“下一步运行”后回到0；从0变1和从1变0都会触发。'}
   ].map(Object.freeze));
   function load(id){
     if(!list.some(p=>p.id===id))throw Error('没有这个默认存档');
     const nodes=[],wires=[],node=(id,type,x,y,label)=>{nodes.push({id,type,x,y,...(label?{label}:{})});return id;},connect=(a,b,port=0)=>wires.push({id:'w'+wires.length,a:{node:a,dir:'out',port:0},b:{node:b,dir:'in',port}}),nand=(id,a,b,x,y)=>{node(id,'nand',x,y);connect(a,id);connect(b,id,1);return id;};
     const xor=(prefix,a,b,x,y)=>{const both=nand(prefix+'n',a,b,x,y),u=nand(prefix+'u',a,both,x+220,y-80),v=nand(prefix+'v',b,both,x+220,y+80);return {both,out:nand(prefix+'o',u,v,x+440,y)};};
+    if(id==='pulse'){node('a','input',0,0,'输入 A');nodes[0].value=0;node('q','delay',0,240,'上一拍 A');connect('a','q');const pulse=xor('pulse','a','q',320,120);node('o','output',1040,120,'短期脉冲');connect(pulse.out,'o');return {version:1,nodes,wires,definitions:{},delayState:{'root/q':0}};}
     if(id==='oscillator'){node('q','delay',0,80,'延迟记忆');const inv=nand('invert','q','q',300,80);node('o','output',600,80,'交替输出');connect(inv,'q');connect('q','o');return {version:1,nodes,wires,definitions:{},delayState:{'root/q':0}};}
     if(id==='counter4'){
       node('enable','input',0,0,'开启计数');nodes[0].value=1;let carry='enable';const delayState={};
