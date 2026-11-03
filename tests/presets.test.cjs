@@ -25,10 +25,10 @@ test('default saves carry independent editable custom gates, including hierarchi
   const memory=P.load('ram256');assert.ok(memory.definitions.preset_ram8.nodes.some(n=>n.type==='custom'&&n.def==='preset_ram7'));assert.deepEqual(C.countComponents(memory),{nand:14050,delay:256,hub:511,splitter:1149});assert.equal(C.definitionInfo('preset_ram8',memory.definitions).stateBits,2048);
 });
 
-test('eight-bit calculator adds and subtracts with wrapping and carry/no-borrow output',()=>{
+test('eight-bit calculator adds and subtracts with wrapping and carry/borrow output',()=>{
   const state=P.load('calculator8'),sim=C.createSimulator(),input=id=>state.nodes.find(n=>n.id===id);
-  for(let a=0;a<256;a++)for(const subtract of [0,1]){const b=a*73%256;input('a').value=a;input('b').value=b;input('subtract').value=subtract;const result=sim(state);assert.deepEqual(result.issues,[]);assert.equal(Number(C.decimal(result.outputs.result)),(subtract?a-b:a+b)&255);assert.deepEqual(result.outputs.carry,[subtract?Number(a>=b):Number(a+b>=256)]);}
-  for(const [a,b,subtract] of [[255,1,0],[0,1,1],[255,255,0],[255,255,1],[128,127,0]]){input('a').value=a;input('b').value=b;input('subtract').value=subtract;const result=sim(state);assert.equal(Number(C.decimal(result.outputs.result)),(subtract?a-b:a+b)&255);}
+  for(let a=0;a<256;a++)for(const subtract of [0,1]){const b=a*73%256;input('a').value=a;input('b').value=b;input('subtract').value=subtract;const result=sim(state);assert.deepEqual(result.issues,[]);assert.equal(Number(C.decimal(result.outputs.result)),(subtract?a-b:a+b)&255);assert.deepEqual(result.outputs.carry,[subtract?Number(a<b):Number(a+b>=256)]);}
+  for(const [a,b,subtract] of [[0,0,1],[1,1,1],[255,1,0],[0,1,1],[255,255,0],[255,255,1],[128,127,0]]){input('a').value=a;input('b').value=b;input('subtract').value=subtract;const result=sim(state);assert.equal(Number(C.decimal(result.outputs.result)),(subtract?a-b:a+b)&255);assert.deepEqual(result.outputs.carry,[subtract?Number(a<b):Number(a+b>=256)]);}
 });
 
 test('eight-bit register writes on steps only, holds when disabled, and clears through delay reset',()=>{

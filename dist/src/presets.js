@@ -10,7 +10,7 @@
     {id:'oscillator',name:'时序振荡器 · 与非门＋延迟线',description:'按“下一步运行”让输出在0和1之间交替，也可以开启连续运行。'},
     {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'},
     {id:'pulse',name:'短期输入 · 与非门＋延迟线',description:'4个与非门搭成异或门，将原输入与延迟一拍的输入比较。切换输入产生一个脉冲，点击“下一步运行”后回到0；从0变1和从1变0都会触发。已附带可复用的短期输入自制门。'},
-    {id:'calculator8',name:'八位加减计算器 · 自制门',description:'A、B输入0～255；减法开关0为加法、1为减法。显示结果的低八位及进位／无借位。自带异或门、一位全加器和八位计算器，可进入内部编辑或展开。'},
+    {id:'calculator8',name:'八位加减计算器 · 自制门',description:'A、B输入0～255；减法开关0为加法、1为减法。显示结果的低八位及进位／借位：减法只有A小于B才亮，0减0不亮。自带异或门、一位全加器和八位计算器，可进入内部编辑或展开。'},
     {id:'register8',name:'八位寄存器 · 可控写入',description:'保存一个0～255的数。设置写入数据，将写入开关设为1，点击下一步保存；关闭写入后保持原值。可从我的逻辑门复用寄存器和八位选择器。'},
     {id:'ram256',name:'256×8位存储器 · 地址读写',description:'保存256个八位数字，每个数为0～255。地址输入0～255，读取输出立即显示该地址保存的数；设置写入数据和写入开关1，下一步只写入当前地址。关闭写入即可保持；全部清零会清空全部256个数。自带各层存储器自制门。'}
   ].map(Object.freeze));
@@ -56,7 +56,7 @@
   function addCalculator(definitions){
     const b=builder(definitions);b.input('a',8,0,'A');b.input('b',8,180,'B');b.input('subtract',1,360,'减法');b.node('sa','splitter',260,0,null,{bits:8});b.node('sb','splitter',260,300,null,{bits:8});b.connect('a','sa');b.connect('b','sb');b.node('pack','hub',1200,160,null,{bits:8});let carry='subtract';
     for(let bit=0;bit<8;bit++){const y=bit*200;b.gate('invert'+bit,'preset_xor',540,y);b.connect(['sb',bit],'invert'+bit);b.connect('subtract','invert'+bit,1);b.gate('bit'+bit,'preset_adder',840,y);b.connect(['sa',bit],'bit'+bit);b.connect('invert'+bit,'bit'+bit,1);b.connect(carry,'bit'+bit,2);b.connect('bit'+bit,'pack',bit);carry=['bit'+bit,1];}
-    b.output('result',8,1480,160,'结果（低八位）');b.output('carry',1,1480,360,'进位／无借位');b.connect('pack','result');b.connect(carry,'carry');definitions.preset_calculator8=C.makeDefinition(b.state,'八位加减计算器');
+    b.output('result',8,1480,160,'结果（低八位）');b.output('carry',1,1480,360,'进位／借位');b.connect('pack','result');b.gate('flag','preset_xor',1200,540);b.connect(carry,'flag');b.connect('subtract','flag',1);b.connect('flag','carry');definitions.preset_calculator8=C.makeDefinition(b.state,'八位加减计算器');
   }
   function addMemory(definitions){
     for(let bits=1;bits<=8;bits++){
@@ -71,7 +71,7 @@
     if(!['calculator8','register8','ram256'].includes(id))return {...basic(id),definitions};
     if(id==='calculator8')addCalculator(definitions);else{addMux(definitions);addRegister(definitions);if(id==='ram256')addMemory(definitions);}
     const b=builder(definitions);
-    if(id==='calculator8'){b.input('a',8,0,'A',5);b.input('b',8,180,'B',3);b.input('subtract',1,360,'减法（0加／1减）');b.gate('calculator','preset_calculator8',360,160);b.connect('a','calculator');b.connect('b','calculator',1);b.connect('subtract','calculator',2);b.output('result',8,740,100,'结果（低八位）');b.output('carry',1,740,300,'进位／无借位');b.connect('calculator','result');b.connect(['calculator',1],'carry');}
+    if(id==='calculator8'){b.input('a',8,0,'A',5);b.input('b',8,180,'B',3);b.input('subtract',1,360,'减法（0加／1减）');b.gate('calculator','preset_calculator8',360,160);b.connect('a','calculator');b.connect('b','calculator',1);b.connect('subtract','calculator',2);b.output('result',8,740,100,'结果（低八位）');b.output('carry',1,740,300,'进位／借位');b.connect('calculator','result');b.connect(['calculator',1],'carry');}
     else if(id==='register8'){b.input('data',8,0,'写入数据');b.input('write',1,180,'写入（下一步保存）');b.gate('register','preset_register8',360,100);b.connect('data','register');b.connect('write','register',1);b.output('o',8,740,100,'保存的数');b.connect('register','o');}
     else{b.input('address',8,0,'地址（0～255）');b.input('data',8,180,'写入数据（0～255）');b.input('write',1,360,'写入（下一步保存）');b.gate('memory','preset_ram8',380,160);b.connect('address','memory');b.connect('data','memory',1);b.connect('write','memory',2);b.output('o',8,780,160,'读取数据');b.connect('memory','o');}
     return b.state;
