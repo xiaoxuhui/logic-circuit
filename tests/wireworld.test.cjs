@@ -67,3 +67,13 @@ test('Golly RLE preserves sparse coordinates, current generation and all three m
 
 
 test('reversed eight-source routing reserves room for all initial three-XOR exchanges',()=>{const nodes=[],wires=[];for(let i=0;i<8;i++){nodes.push(n('i'+i,'input',0,i*100),n('o'+i,'output',500,i*100));wires.push(wire('w'+i,'i'+(7-i),'o'+i));}const board=K.build({version:1,definitions:{},nodes,wires});assert.equal(board.inputRouting.crossovers,28);assert.ok(board.inputs.every(p=>p.seeds.length===1));assert.ok(board.inputs.every((p,i)=>!i||p.seeds[0].head[1]>board.inputs[i-1].seeds[0].head[1]));});
+
+
+test('conversion cancels consecutive XOR-one operations and omits fixed zero branches without freezing input switches',()=>{
+  const source={version:1,definitions:{},nodes:[n('a','input',0,0,{value:0}),n('one','nand',100)],wires:[]};const gate=(id,a,b)=>{source.nodes.push(n(id,'nand',200+source.nodes.length*30));source.wires.push(wire(id+'a',a,id),wire(id+'b',b,id,1));return id;},xor=(id,a,b)=>{const t=gate(id+'t',a,b);return gate(id+'o',gate(id+'u',a,t),gate(id+'v',b,t));};const end=xor('second',xor('first','a','one'),'one');source.nodes.push(n('out','output',1000));source.wires.push(wire('result',end,'out'));const before=JSON.stringify(source),board=K.build(source);assert.equal(board.modules.length,0);assert.equal(board.gateCount,0);assert.equal(board.inputs.filter(p=>p.type==='constant').length,0);assert.equal(board.inputs[0].seeds.length,1);assert.deepEqual(run(board,{[board.inputs[0].id]:0}).outputs,[0]);assert.deepEqual(run(board,{[board.inputs[0].id]:1}).outputs,[1]);assert.equal(JSON.stringify(source),before);
+  const zero=gate('zero','one','one');source.wires=source.wires.filter(w=>w.id!=='result');source.wires.push(wire('zero-result',xor('withZero','a',zero),'out'));const reduced=K.build(source);assert.equal(reduced.modules.length,0);for(const value of [0,1])assert.deepEqual(run(reduced,{[reduced.inputs[0].id]:value}).outputs,[value]);
+});
+
+test('simplification never cancels NOT gates across an intervening OR or across delay state',()=>{
+  const source={version:1,definitions:{},nodes:[n('a','input'),n('b','input',0,160),n('nb','nand',200),n('mid','nand',400),n('outnot','nand',600),n('o','output',800)],wires:[wire('b1','b','nb'),wire('b2','b','nb',1),wire('a','a','mid'),wire('nb','nb','mid',1),wire('m1','mid','outnot'),wire('m2','mid','outnot',1),wire('q','outnot','o')]},board=K.build(source);assert.ok(board.modules.some(p=>p.type==='or'||p.type==='nand'));for(let row=0;row<4;row++)assert.deepEqual(run(board,Object.fromEntries(board.inputs.filter(p=>p.type==='input').map((p,i)=>[p.id,row>>i&1]))).outputs,[(row&1)&(1-(row>>1&1))]);
+});
