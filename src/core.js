@@ -9,8 +9,20 @@
   const packBits=bits=>{const text=bits.slice().reverse().join('')||'0',value=BigInt('0b'+text);return value<=BigInt(Number.MAX_SAFE_INTEGER)?Number(value):text;};
   const decimal=bits=>bigValue(packBits(bits)).toString();
   const DISPLAY_FORMATS=['unsigned','signed','hex'];
-  function formatValue(bits,format='unsigned'){const value=bigValue(packBits(bits));if(format==='hex')return '0x'+value.toString(16).toUpperCase().padStart(Math.ceil(bits.length/4),'0');if(format==='signed'&&bits.at(-1)===1)return (value-(1n<<BigInt(bits.length))).toString();return value.toString();}
-  function parseSignal(text,bits,format='unsigned'){
+  function fractionalCount(count=0){if(!Number.isInteger(count)||count<0||count>MAX_BITS)throw Error('小数位请输入 0–'+MAX_BITS+' 的整数');return count;}
+  function formatValue(bits,format='unsigned',fractionBits=0){
+    const count=fractionalCount(fractionBits),scale=1n<<BigInt(count);let value=bigValue(packBits(bits));
+    if(format==='hex'){if(!count)return '0x'+value.toString(16).toUpperCase().padStart(Math.ceil(bits.length/4),'0');const digits=Math.ceil(count/4),whole=(value/scale).toString(16).toUpperCase().padStart(Math.max(1,Math.ceil((bits.length-count)/4)),'0'),fraction=((value%scale)<<BigInt(digits*4-count)).toString(16).toUpperCase().padStart(digits,'0');return '0x'+whole+'.'+fraction;}
+    if(format==='signed'&&bits.at(-1)===1)value-=1n<<BigInt(bits.length);
+    if(!count)return value.toString();const negative=value<0n;if(negative)value=-value;const fraction=((value%scale)*5n**BigInt(count)).toString().padStart(count,'0').replace(/0+$/,'');return (negative?'-':'')+(value/scale).toString()+(fraction?'.'+fraction:'');
+  }
+  function parseSignal(text,bits,format='unsigned',fractionBits=0){
+    const count=fractionalCount(fractionBits);
+    if(count&& !/^0[bB]/.test(String(text).trim())&&(!/^0[xX]/.test(String(text).trim())||String(text).includes('.'))){
+      text=String(text).trim();const hex=format==='hex'||/^0x/i.test(text),match=(hex?/^(?:0x)?([0-9a-f]+)(?:\.([0-9a-f]+))?$/i:/^(-?)(\d+)(?:\.(\d+))?$/).exec(text);if(!match)throw Error('请输入当前模式的数值，也可使用 0x 或 0b 前缀');
+      const fraction=hex?match[2]||'':match[3]||'',digits=hex?match[1]+fraction:match[2]+fraction,denominator=BigInt(hex?16:10)**BigInt(fraction.length),numerator=BigInt((hex?'0x':'')+digits)*(1n<<BigInt(count));if(numerator%denominator)throw Error('该数值不能用当前小数位精确表示');
+      let value=numerator/denominator;if(!hex&&match[1]==='-')value=-value;const modulus=1n<<BigInt(bits),signed=format==='signed'&&!hex,min=signed?-(modulus/2n):0n,max=signed?modulus/2n-1n:modulus-1n;if(value<min||value>max)throw Error('数值超出 '+bits+' 位范围');return bitArray(value<0?value+modulus:value,bits);
+    }
     text=String(text).trim();const modulus=1n<<BigInt(bits),literal=/^0[xb]/i.test(text);let value;
     try{if(literal){if(!/^(0x[0-9a-f]+|0b[01]+)$/i.test(text))throw Error();value=BigInt(text);}else if(format==='hex'){if(!/^[0-9a-f]+$/i.test(text))throw Error();value=BigInt('0x'+text);}else{if(!/^-?\d+$/.test(text))throw Error();value=BigInt(text);}}catch{throw Error('请输入当前模式的整数，也可使用 0x 或 0b 前缀');}
     const signed=format==='signed'&&!literal,min=signed?-(modulus/2n):0n,max=signed?modulus/2n-1n:modulus-1n;if(value<min||value>max)throw Error('数值超出 '+bits+' 位范围');return bitArray(value<0?value+modulus:value,bits);
@@ -427,6 +439,7 @@
   function validate(raw){
     const fail=()=>{throw Error('电路文件无效或不兼容，请检查格式、端口和自定义门');};
     if(raw?.displayFormat!==undefined&&!DISPLAY_FORMATS.includes(raw.displayFormat))fail();
+    if(raw?.fractionBits!==undefined&&(!Number.isInteger(raw.fractionBits)||raw.fractionBits<0||raw.fractionBits>MAX_BITS))fail();
     if(!raw||raw.version!==1||!Array.isArray(raw.nodes)||!Array.isArray(raw.wires)||!raw.definitions||typeof raw.definitions!=='object'||Array.isArray(raw.definitions))fail();
     const safeId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x)&&!['__proto__','constructor','prototype'].includes(x);
     if(raw.wireOverrides!==undefined&&(!raw.wireOverrides||typeof raw.wireOverrides!=='object'||Array.isArray(raw.wireOverrides)||Object.keys(raw.wireOverrides).length>1500||Object.entries(raw.wireOverrides).some(([id,bits])=>!safeId(id)||!Array.isArray(bits)||!bits.length||bits.length>MAX_BITS||bits.some(b=>b!==0&&b!==1))))fail();
