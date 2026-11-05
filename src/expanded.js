@@ -56,11 +56,11 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
       const cached=templates.get(cacheKey);
       if(cached){if(depth+cached.view.depthSpan>C.MAX_DEPTH)throw Error('展开层数超过限制');templates.delete(cacheKey);templates.set(cacheKey,cached);stats.hits++;const view=rebase(cached.view,'root',scope);total+=view.count;leaves.push(...view.leaves);frames.push(...view.frames);layouts.push(...view.layouts);return view;}
       stats.misses++;stats.circuitsBuilt++;let netCounter=0,depthSpan=0;const symbols=new Map();
-      const net=C.nets(local),sim=C.simulate(local,overrides,depth,{...simulationContext,memory:source.delayState||{},scope,scopedOverrides:source.scopedWireOverrides||{}}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'),outputOrder=ordered.filter(n=>n.type==='output');
+      const net=C.nets(local),sim=C.simulate(local,overrides,depth,{...simulationContext,memory:source.delayState||{},scope,scopedOverrides:source.scopedWireOverrides||{}}),items=new Map(),inputs={},outputs={},ordered=local.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id)),inputOrder=ordered.filter(n=>n.type==='input'&&!n.constant),outputOrder=ordered.filter(n=>n.type==='output');
       for(const n of local.nodes){
         if(boundary&&!['input','output'].includes(n.type)&&!C.ports(n,defs).some(p=>net.portNet.has(C.key(p))))continue;
         total++;
-        const s=C.spec(n,defs),label=(n.type==='input'?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.type==='custom'?defs[n.def].name:names[n.type]));
+        const s=C.spec(n,defs),label=(n.type==='input'&&!n.constant?'IN'+(inputOrder.findIndex(p=>p.id===n.id)+1)+' · ':n.type==='output'?'OUT'+(outputOrder.findIndex(p=>p.id===n.id)+1)+' · ':'')+(n.label||(n.constant?'常数':n.type==='custom'?C.gateDisplayName(n,{...source,definitions:defs},sim):names[n.type]));
         if(n.type==='custom'&&!options.direct&&depth<maxLayers){
           const d=defs[n.def],input={};d.inputs.forEach((p,i)=>input[p.id]=sim.portValues[C.key({node:n.id,dir:'in',port:i})]);
           const child=circuit({nodes:d.nodes,wires:d.wires,definitions:defs},input,true,depth+1,scope+'/'+n.id,d),pad=28+Math.max(d.inputs.length,d.outputs.length)*14,w=child.w+pad*2;
@@ -80,7 +80,7 @@ if(typeof importScripts==='function'&&typeof document==='undefined')importScript
           const markup=`<rect class="expanded-frame" width="${w}" height="${h}" rx="11"/><text class="expanded-frame-title" x="16" y="23">${esc(label)} · 内部电路</text>${links}<g transform="translate(${pad} 40)">${compact?`<use href="#${child.symbolId}" data-expanded-scene="true" data-expanded-child="${n.id}"/>`:child.svg}</g>`;
           items.set(n.id,{n,w,h,ins,outs,markup,childPad:pad,childW:child.w,childH:child.h});frames.push({name:label,scope:scope+'/'+n.id});continue;
         }
-        if(boundary&&(n.type==='input'||n.type==='output')){
+        if(boundary&&((n.type==='input'&&!n.constant)||n.type==='output')){
           const isInput=n.type==='input',bits=isInput?sim.values[n.id][0]:sim.outputs[n.id],z=C.size(n,defs),point=C.ports({...n,x:0,y:0},defs)[0],drawPoint=C.ports({...n,x:0,y:0,rotation:0},defs)[0],ports=boundaryPorts[isInput?'inputs':'outputs'],index=ports.findIndex(p=>p.id===n.id),label=(isInput?'IN':'OUT')+(index+1)+' · '+ports[index].label;
           const markup=`<g class="expanded-interface"><title>${esc(label)}</title><g transform="${C.rotationTransform(n,defs)}"><circle cx="${drawPoint.x}" cy="${drawPoint.y}" r="4" fill="${color(bits)}"/><text x="8" y="18">${esc(label.slice(0,14))}</text><text x="8" y="62">${bits.length} 位 · ${bitText(bits)}</text></g></g>`;
           items.set(n.id,{n,w:z.w,h:z.h,ins:isInput?[]:[point],outs:isInput?[point]:[],markup});continue;

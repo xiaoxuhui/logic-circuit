@@ -28,6 +28,12 @@
     try{if(literal){if(!/^(0x[0-9a-f]+|0b[01]+)$/i.test(text))throw Error();value=BigInt(text);}else if(format==='hex'){if(!/^[0-9a-f]+$/i.test(text))throw Error();value=BigInt('0x'+text);}else{if(!/^-?\d+$/.test(text))throw Error();value=BigInt(text);}}catch{throw Error('请输入当前模式的整数，也可使用 0x 或 0b 前缀');}
     const signed=format==='signed'&&!literal,min=signed?-(modulus/2n):0n,max=signed?modulus/2n-1n:modulus-1n;if(value<min||value>max)throw Error('数值超出 '+bits+' 位范围');return bitArray(value<0?value+modulus:value,bits);
   }
+  function gateDisplayName(node,state,sim){const def=state.definitions[node.def],name=node.label||def?.name||'逻辑门',value=sim.nameValues?.[node.id];return value?.bits?name+'_'+formatValue(value.bits,state.displayFormat,value.fraction):name;}
+  function setConstantValue(root,ownerId,nodeId,bits){
+    const next=clone(root),local=ownerId?next.definitions[ownerId]:next,node=local?.nodes.find(n=>n.id===nodeId);
+    if(!node?.constant||!Array.isArray(bits)||bits.length!==width(node)||bits.some(b=>b!==0&&b!==1))throw Error('常数数值或位宽无效');
+    node.value=packBits(bits);return ownerId?updateDefinition(next,ownerId,local,{preserveWires:true}):validate(next);
+  }
   function spec(n,defs={}){
     if(n.type==='nand')return {inputs:[1,1],outputs:[1],inLabels:['A','B'],outLabels:['Q']};
     if(n.type==='delay')return {inputs:[width(n)],outputs:[width(n)],inLabels:['IN'],outLabels:['Q']};
@@ -204,13 +210,14 @@
       }
       const local={nodes:d.nodes,wires:d.wires,definitions:defs};
       const rows=new Map(),rowSizes=new Map();let cachedBytes=0;const inputBits=d.inputs.reduce((sum,p)=>sum+p.width,0),stateBits=registers.reduce((sum,p)=>sum+p.width,0),topologyCache=new Map(),scope='table:'+id;
-      const table={eligible:true,inputBits,stateBits,registers,rows,get cachedBytes(){return cachedBytes;},lookup(ins,stored=[],stats){
+      const nameFraction=d.nameWire?wireFractionBits(local,d.nameWire):0;
+      const table={eligible:true,nameFraction,inputBits,stateBits,registers,rows,get cachedBytes(){return cachedBytes;},lookup(ins,stored=[],stats){
         const state=registers.map((p,i)=>bitArray(stored[i]||0,p.width)),k=ins.map(bits=>bits.join('')).join('|')+'#'+state.map(bits=>bits.join('')).join('|');
         if(rows.has(k)){if(stats)stats.tableHits++;return rows.get(k);}
         if(stats)stats.tableMisses++;
         const memory=Object.fromEntries(registers.map((p,i)=>[scope+'/'+p.path,packBits(state[i])])),overrides=Object.fromEntries(d.inputs.map((p,i)=>[p.id,ins[i]]));
         const sim=simulate(local,overrides,1,{memory,scope,tables,topologyCache,stats,captureNext:true});
-        const result={outputs:d.outputs.map(p=>sim.outputs[p.id]),next:registers.map(p=>sim.nextDelayState[scope+'/'+p.path]||0),issues:sim.issues};
+        const result={outputs:d.outputs.map(p=>sim.outputs[p.id]),next:registers.map(p=>sim.nextDelayState[scope+'/'+p.path]||0),issues:sim.issues,...(d.nameWire?{nameValue:sim.wires[d.nameWire]}:{})};
         const bytes=2*(k.length+JSON.stringify(result).length);
         if(bytes<=4*1024*1024){while(rows.size>=4096||cachedBytes+bytes>4*1024*1024){const oldest=rows.keys().next().value;cachedBytes-=rowSizes.get(oldest);rows.delete(oldest);rowSizes.delete(oldest);}rows.set(k,result);rowSizes.set(k,bytes);cachedBytes+=bytes;}return result;
       }};
@@ -250,7 +257,7 @@
   }
   function simulate(state,overrides={},depth=0,context={memory:state.delayState||{},scope:'root'}){
     if(depth>MAX_DEPTH)throw Error('自定义门嵌套过深');
-    const defs=state.definitions||{},topology=simulationTopology(state,context),{net,ps}=topology,issues=new Set(),values={},outputs={};
+    const defs=state.definitions||{},topology=simulationTopology(state,context),{net,ps}=topology,issues=new Set(),values={},outputs={},nameValues={};
     const scopedOverrides=context.scopedOverrides||state.scopedWireOverrides||{},scopeKeys=Object.keys(scopedOverrides),blocked=scope=>scopeKeys.some(path=>path===scope||path.startsWith(scope+'/'));
     context={...context,scopedOverrides};
     const resultKey=context.session&&JSON.stringify([topology.signature,overrides,state.nodes.filter(n=>n.type==='input').map(n=>[n.id,n.value||0]),context.memories.get(context.scope)||[],context.scope==='root'?state.wireOverrides||{}:{},scopeKeys.filter(path=>path===context.scope||path.startsWith(context.scope+'/')).map(path=>[path,scopedOverrides[path]])]);
@@ -269,13 +276,13 @@
       for(const n of ordered||state.nodes){
         if(context.stats)context.stats.nodeEvaluations++;
         const ins=ps.get(n.id).filter(p=>p.dir==='in').map(p=>read(p,ordered?next:current));
-        if(n.type==='input')next[n.id]=[overrides[n.id]||bitArray(n.value||0,width(n))];
+        if(n.type==='input')next[n.id]=[(!n.constant&&overrides[n.id])||bitArray(n.value||0,width(n))];
         else if(n.type==='output')next[n.id]=[];
         else if(n.type==='delay')next[n.id]=[bitArray(context.memory[context.scope+'/'+n.id]||0,width(n))];
         else if(n.type==='nand')next[n.id]=[[1-(ins[0][0]&ins[1][0])]];
         else if(n.type==='hub')next[n.id]=[ins.map(v=>v[0])];
         else if(n.type==='splitter')next[n.id]=ins[0].map(v=>[v]);
-        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible&&!blocked(context.scope+'/'+n.id)){const row=lookupState(table,ins,context.scope+'/'+n.id,context);next[n.id]=row.outputs;row.issues.forEach(x=>issues.add(x));}else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id,captureNext:false});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);sub.issues.forEach(x=>issues.add(x));}}
+        else {const d=defs[n.def],table=tables&&tableFor(n.def,defs,tables);if(table?.eligible&&!blocked(context.scope+'/'+n.id)){const row=lookupState(table,ins,context.scope+'/'+n.id,context);next[n.id]=row.outputs;if(d.nameWire)nameValues[n.id]={bits:row.nameValue,fraction:table.nameFraction};row.issues.forEach(x=>issues.add(x));}else{const input={};d.inputs.forEach((p,i)=>input[p.id]=ins[i]);const sub=simulate({nodes:d.nodes,wires:d.wires,definitions:defs},input,depth+1,{...context,tables,memory:context.memory,scope:context.scope+'/'+n.id,captureNext:false});next[n.id]=d.outputs.map(p=>sub.outputs[p.id]);if(d.nameWire)nameValues[n.id]={bits:sub.wires[d.nameWire],fraction:wireFractionBits({...d,definitions:defs},d.nameWire)};sub.issues.forEach(x=>issues.add(x));}}
       }
       if(ordered||JSON.stringify(next)===JSON.stringify(current)){current=next;settled=true;break;}current=next;
     }
@@ -285,7 +292,7 @@
     for(const n of state.nodes)for(const p of ps.get(n.id))portValues[key(p)]=p.dir==='out'&&!forced.has(net.portNet.get(key(p)))?current[n.id][p.port]:read(p,current);
     for(const w of state.wires){const g=net.groups.get(net.wireNet.get(w.id)),p=g.drivers.values().next().value||[...g.ports.values()].find(p=>p.width===g.width)||g.ports.values().next().value;wires[w.id]=forced.get(g.id)||(p?read({...p,width:g.width},current):[0]);}
     const definitionModes={};if(depth===0&&tables)for(const id of Object.keys(defs)){const table=tableFor(id,defs,tables);definitionModes[id]=table.eligible?(table.stateBits?'状态真值表':'真值表'):table.reason;}
-    const result={values:current,outputs,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
+    const result={values:current,outputs,nameValues,wires,portValues,issues:[...issues],definitionModes,forcedWires:state.wires.filter(w=>forced.has(net.wireNet.get(w.id))).map(w=>w.id)};
     if(context.captureNext){
       const nextDelayState={};
       for(const n of state.nodes){
@@ -379,14 +386,14 @@
   function makeDefinition(state,name){
     name=String(name).trim();if(!name||name.length>24)throw Error('名称请输入 1–24 个字');
     const sorted=state.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id));
-    const portsFor=type=>sorted.filter(n=>n.type===type).map((n,i)=>({id:n.id,label:n.label||(type==='input'?'I':'O')+(i+1),width:width(n)}));
+    const portsFor=type=>sorted.filter(n=>n.type===type&&!(type==='input'&&n.constant)).map((n,i)=>({id:n.id,label:n.label||(type==='input'?'I':'O')+(i+1),width:width(n)}));
     const inputs=portsFor('input'),outputs=portsFor('output');
     if(inputs.length>16||outputs.length>16)throw Error('封装最多支持 16 个输入和 16 个输出');
     return {name,inputs,outputs,nodes:clone(state.nodes),wires:clone(state.wires)};
   }
   function updateDefinition(root,id,edited,{preserveWires=false}={}){
     const next=clone(root),old=next.definitions[id];if(!old)throw Error('自定义门不存在');
-    const updated={...old,...makeDefinition(edited,old.name)};
+    const updated={...old,...makeDefinition(edited,old.name)};if(updated.nameWire&&!updated.wires.some(w=>w.id===updated.nameWire))delete updated.nameWire;
     for(const dir of ['inputs','outputs']){const pending=new Map(updated[dir].map(p=>[p.id,p])),ordered=[];for(const p of old[dir])if(pending.has(p.id)){ordered.push(pending.get(p.id));pending.delete(p.id);}updated[dir]=ordered.concat([...pending.values()]);}
     next.definitions[id]=updated;
     for(const local of [next,...Object.values(next.definitions)]){
@@ -468,15 +475,15 @@
       if(!Array.isArray(s.nodes)||!Array.isArray(s.wires)||s.nodes.length>500||s.wires.length>1500)fail();
       if(s.nodes.some(n=>n&&n.displayFormat!==undefined&&!DISPLAY_FORMATS.includes(n.displayFormat)))fail();
       const nodeIds=new Set(),wireIds=new Set();
-      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.rotation!==undefined&&![0,90,180,270].includes(n.rotation))fail();if(n.fractionBits!==undefined&&(!Number.isInteger(n.fractionBits)||n.fractionBits<0||n.fractionBits>=width(n)))fail();if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>MAX_BITS))fail();if(['hub','splitter'].includes(n.type)&&width(n)<1)fail();if(n.value!==undefined&&!validValue(n.value,width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
+      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.constant!==undefined&&(n.type!=='input'||typeof n.constant!=='boolean'))fail();if(n.rotation!==undefined&&![0,90,180,270].includes(n.rotation))fail();if(n.fractionBits!==undefined&&(!Number.isInteger(n.fractionBits)||n.fractionBits<0||n.fractionBits>=width(n)))fail();if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>MAX_BITS))fail();if(['hub','splitter'].includes(n.type)&&width(n)<1)fail();if(n.value!==undefined&&!validValue(n.value,width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
       for(const w of s.wires){if(!w||!safeId(w.id)||wireIds.has(w.id))fail();wireIds.add(w.id);for(const e of [w.a,w.b]){if(!e||typeof e!=='object')fail();if(e.node){if(!nodeIds.has(e.node)||!['in','out'].includes(e.dir)||!Number.isInteger(e.port)||e.port<0)fail();const n=s.nodes.find(n=>n.id===e.node);let ps;try{ps=spec(n,defs);}catch{fail();}if(e.port>=ps[e.dir==='in'?'inputs':'outputs'].length)fail();}else if(!finite(e.x)||!finite(e.y))fail();}if(w.via!==undefined&&(!Array.isArray(w.via)||w.via.length>100||w.via.some(p=>!finite(p.x)||!finite(p.y))))fail();}
     }
-    for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
-    let total=raw.nodes.length;for(const id of ids){circuit(defs[id]);total+=defs[id].nodes.length;}if(total>5000)fail();circuit(raw);
+    for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||n.constant||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type&&!(type==='input'&&n.constant)).length!==ps.length)fail();}}
+    let total=raw.nodes.length;for(const id of ids){circuit(defs[id]);if(defs[id].nameWire!==undefined&&(!safeId(defs[id].nameWire)||!defs[id].wires.some(w=>w.id===defs[id].nameWire)))fail();total+=defs[id].nodes.length;}if(total>5000)fail();circuit(raw);
     for(const [path,value] of Object.entries(raw.delayState||{})){let local=raw,n;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){n=local.nodes.find(n=>n.id===parts[i]);if(!n)break;if(i<parts.length-1){if(n.type!=='custom'){n=null;break;}local=defs[n.def];}}if(n?.type==='delay'&&!validValue(value,width(n)))fail();}
     const visiting=new Set(),memo=new Map();function visit(id){if(visiting.has(id))fail();if(memo.has(id))return memo.get(id);visiting.add(id);let depth=1,cost=defs[id].nodes.length;for(const n of defs[id].nodes)if(n.type==='custom'){const sub=visit(n.def);depth=Math.max(depth,1+sub.depth);cost+=sub.cost;}if(depth>MAX_DEPTH||cost>1000000)fail();visiting.delete(id);const result={depth,cost};memo.set(id,result);return result;}ids.forEach(visit);let cost=raw.nodes.length;for(const n of raw.nodes)if(n.type==='custom')cost+=visit(n.def).cost;if(cost>1000000)fail();
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {nodeFractionBits,wireFractionBits,configureNumberBits,clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {setConstantValue,gateDisplayName,nodeFractionBits,wireFractionBits,configureNumberBits,clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });
