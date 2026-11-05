@@ -3,6 +3,7 @@
   const clone=x=>JSON.parse(JSON.stringify(x));
   const types=['nand','input','output','hub','splitter','delay','custom'];
   const width=n=>n.bits||1;
+  const nodeFractionBits=(n,state={})=>n.fractionBits??Math.min(state.fractionBits||0,Math.max(0,width(n)-1));
   const MAX_BITS=256,MAX_DEPTH=32;
   const bigValue=value=>typeof value==='string'?BigInt('0b'+value):BigInt(value||0);
   const bitArray=(value,bits)=>{const text=bigValue(value).toString(2).padStart(bits,'0').slice(-bits);return [...text].reverse().map(Number);};
@@ -32,8 +33,8 @@
     if(n.type==='delay')return {inputs:[width(n)],outputs:[width(n)],inLabels:['IN'],outLabels:['Q']};
     if(n.type==='input')return {inputs:[],outputs:[width(n)],inLabels:[],outLabels:[n.label||'OUT']};
     if(n.type==='output')return {inputs:[width(n)],outputs:[],inLabels:[n.label||'IN'],outLabels:[]};
-    if(n.type==='hub')return {inputs:Array(width(n)).fill(1),outputs:[width(n)],inLabels:Array.from({length:width(n)},(_,i)=>'b'+i),outLabels:[width(n)+'位']};
-    if(n.type==='splitter')return {inputs:[width(n)],outputs:Array(width(n)).fill(1),inLabels:[width(n)+'位'],outLabels:Array.from({length:width(n)},(_,i)=>'b'+i)};
+    if(n.type==='hub')return {inputs:Array(width(n)).fill(1),outputs:[width(n)],inLabels:Array.from({length:width(n)},(_,i)=>'b'+(i-(n.fractionBits||0))),outLabels:[width(n)+'位']};
+    if(n.type==='splitter')return {inputs:[width(n)],outputs:Array(width(n)).fill(1),inLabels:[width(n)+'位'],outLabels:Array.from({length:width(n)},(_,i)=>'b'+(i-(n.fractionBits||0)))};
     const d=defs[n.def];if(!d)throw Error('自定义门不存在');
     return {inputs:d.inputs.map(p=>p.width),outputs:d.outputs.map(p=>p.width),inLabels:d.inputs.map(p=>p.label),outLabels:d.outputs.map(p=>p.label)};
   }
@@ -43,6 +44,14 @@
   function rotationTransform(n,defs){const z=baseSize(n,defs);switch(n.rotation||0){case 90:return `translate(${z.h} 0) rotate(90)`;case 180:return `translate(${z.w} ${z.h}) rotate(180)`;case 270:return `translate(0 ${z.w}) rotate(270)`;default:return '';}}
   function ports(n,defs){const s=spec(n,defs),z=baseSize(n,defs),out=[];for(const dir of ['in','out']){const ws=s[dir==='in'?'inputs':'outputs'],labels=s[dir==='in'?'inLabels':'outLabels'];ws.forEach((w,i)=>{const p=rotatedPoint({x:dir==='out'?z.w:0,y:z.h/2-(ws.length-1)*12+i*24},n,defs);out.push({node:n.id,dir,port:i,width:w,label:labels[i],x:n.x+p.x,y:n.y+p.y});});}return out;}
   const key=p=>p.node+':'+p.dir+':'+p.port;
+  function wireFractionBits(state,id,net=nets(state)){
+    const group=net.groups.get(net.wireNet.get(id));if(!group)return 0;
+    const ports=group.drivers.size?[...group.drivers.values()]:[...group.ports.values()];
+    for(const p of ports){let n=state.nodes.find(n=>n.id===p.node);if(!n)continue;
+      if(n.type==='custom'){const def=state.definitions[n.def],port=(p.dir==='in'?def.inputs:def.outputs)[p.port];n=def.nodes.find(n=>n.id===port?.id);}
+      if(n&&['input','output','delay','hub','splitter'].includes(n.type)&&!(n.type==='hub'&&p.dir==='in')&&!(n.type==='splitter'&&p.dir==='out'))return nodeFractionBits(n,state);
+    }return 0;
+  }
   function anchor(e,state){if(!e.node)return {x:e.x,y:e.y};const n=state.nodes.find(n=>n.id===e.node);return ports(n,state.definitions).find(p=>p.dir===e.dir&&p.port===e.port);}
   function points(w,state){const a=anchor(w.a,state),b=anchor(w.b,state);if(Array.isArray(w.via))return [a,...w.via,b];const x=(a.x+b.x)/2;return [a,{x,y:a.y},{x,y:b.y},b];}
   function segmentsOverlap(p,q,c,d){const dx=q.x-p.x,dy=q.y-p.y,ex=d.x-c.x,ey=d.y-c.y;if((!dx&&!dy)||(!ex&&!ey)||Math.abs(dx*ey-dy*ex)>1e-7||Math.abs(dx*(c.y-p.y)-dy*(c.x-p.x))>1e-7)return false;const axis=Math.abs(dx)>=Math.abs(dy)?'x':'y';return Math.min(Math.max(p[axis],q[axis]),Math.max(c[axis],d[axis]))-Math.max(Math.min(p[axis],q[axis]),Math.min(c[axis],d[axis]))>1e-7;}
@@ -326,7 +335,7 @@
     if(limit===0)limit=Infinity;
     const defs=state.definitions||{},memo=new Map(),visiting=new Set(),items=[];let skip=offset;
     function countNode(n){if(n.type==='delay')return 1;if(n.type!=='custom')return 0;if(memo.has(n.def))return memo.get(n.def);if(visiting.has(n.def))throw Error('自定义门循环依赖');const d=defs[n.def];if(!d)throw Error('自定义门不存在');visiting.add(n.def);const count=d.nodes.reduce((sum,n)=>sum+countNode(n),0);visiting.delete(n.def);memo.set(n.def,count);return count;}
-    function visit(n,path,names){const count=countNode(n);if(!count||items.length>=limit)return;if(skip>=count){skip-=count;return;}if(n.type==='delay'){const bits=width(n);items.push({path,label:names.join(' / '),width:bits,value:packBits(bitArray(state.delayState?.[path]||0,bits))});}else for(const child of defs[n.def].nodes){visit(child,path+'/'+child.id,[...names,child.label||(child.type==='custom'?defs[child.def]?.name:child.type==='delay'?'延迟线':'元件')]);if(items.length>=limit)break;}}
+    function visit(n,path,names){const count=countNode(n);if(!count||items.length>=limit)return;if(skip>=count){skip-=count;return;}if(n.type==='delay'){const bits=width(n);items.push({path,label:names.join(' / '),width:bits,fractionBits:nodeFractionBits(n,state),value:packBits(bitArray(state.delayState?.[path]||0,bits))});}else for(const child of defs[n.def].nodes){visit(child,path+'/'+child.id,[...names,child.label||(child.type==='custom'?defs[child.def]?.name:child.type==='delay'?'延迟线':'元件')]);if(items.length>=limit)break;}}
     if(scope==='root'){const total=state.nodes.reduce((sum,n)=>sum+countNode(n),0);for(const n of state.nodes){visit(n,'root/'+n.id,[n.label||(n.type==='custom'?defs[n.def]?.name:'延迟线')]);if(items.length>=limit)break;}return {total,items};}
     const {node,names}=delayTarget(state,scope),total=countNode(node);visit(node,scope,names);return {total,items};
   }
@@ -393,7 +402,7 @@
     const local=ownerId?root.definitions[ownerId]:root,node=local?.nodes.find(n=>n.id===nodeId);
     if(!node||!types.includes(replacement?.type))throw Error('替换元件无效');
     const variableWidth=['input','output','delay','hub','splitter'].includes(replacement.type),bits=replacement.bits??width(node);
-    if(variableWidth&&(!Number.isInteger(bits)||bits<(['hub','splitter'].includes(replacement.type)?2:1)||bits>MAX_BITS))throw Error('替换元件位宽无效');
+    if(variableWidth&&(!Number.isInteger(bits)||bits<1||bits>MAX_BITS))throw Error('替换元件位宽无效');
     if(replacement.type==='custom'){
       if(!root.definitions[replacement.def])throw Error('自定义门不存在');
       const seen=new Set(),contains=id=>{if(id===ownerId)return true;if(seen.has(id))return false;seen.add(id);return root.definitions[id].nodes.some(n=>n.type==='custom'&&contains(n.def));};
@@ -418,11 +427,17 @@
   function resizeComponentBits(root,ownerId,nodeId,bits){
     const next=clone(root),local=ownerId?next.definitions[ownerId]:next,node=local?.nodes.find(n=>n.id===nodeId);
     if(!node||!['input','output','delay','hub','splitter'].includes(node.type))throw Error('此元件没有可调整的带宽');
-    const min=['hub','splitter'].includes(node.type)?2:1;if(!Number.isInteger(bits)||bits<min||bits>MAX_BITS)throw Error('带宽请输入 '+min+'–'+MAX_BITS+' 的整数');
-    node.bits=bits;if(node.type==='input')node.value=packBits(bitArray(node.value||0,bits));
+    const min=1;if(!Number.isInteger(bits)||bits<min||bits>MAX_BITS)throw Error('带宽请输入 '+min+'–'+MAX_BITS+' 的整数');
+    node.bits=bits;if(node.fractionBits!==undefined)node.fractionBits=Math.min(node.fractionBits,bits-1);if(node.type==='input')node.value=packBits(bitArray(node.value||0,bits));
     const available=ports(node,next.definitions);local.wires=local.wires.filter(w=>[w.a,w.b].every(e=>e.node!==nodeId||available.some(p=>p.dir===e.dir&&p.port===e.port)));
     if(node.type==='delay')for(const [path,value] of Object.entries(next.delayState||{})){let circuit=root,owner=null;const parts=path.split('/').slice(1);for(let i=0;i<parts.length;i++){if(i===parts.length-1&&owner===ownerId&&parts[i]===nodeId){next.delayState[path]=packBits(bitArray(value,bits));break;}const n=circuit.nodes.find(n=>n.id===parts[i]);if(n?.type!=='custom')break;owner=n.def;circuit=root.definitions[owner];}}
     const active={...local,definitions:next.definitions};for(const w of local.wires)if(w.autoRoute&&[w.a,w.b].some(e=>e.node===nodeId)){const ps=route(w.a,w.b,active,w.id);if(ps)w.via=ps.slice(1,-1);}
+    return ownerId?updateDefinition(next,ownerId,local):validate(next);
+  }
+  function configureNumberBits(root,ownerId,nodeId,integerBits,fractionBits){
+    if(!Number.isInteger(integerBits)||integerBits<1||!Number.isInteger(fractionBits)||fractionBits<0||integerBits+fractionBits>MAX_BITS)throw Error('整数位至少 1，小数位至少 0，总位宽不能超过 '+MAX_BITS);
+    const next=resizeComponentBits(root,ownerId,nodeId,integerBits+fractionBits),local=ownerId?next.definitions[ownerId]:next;
+    local.nodes.find(n=>n.id===nodeId).fractionBits=fractionBits;
     return ownerId?updateDefinition(next,ownerId,local):validate(next);
   }
   function pruneDefinitions(state){
@@ -453,7 +468,7 @@
       if(!Array.isArray(s.nodes)||!Array.isArray(s.wires)||s.nodes.length>500||s.wires.length>1500)fail();
       if(s.nodes.some(n=>n&&n.displayFormat!==undefined&&!DISPLAY_FORMATS.includes(n.displayFormat)))fail();
       const nodeIds=new Set(),wireIds=new Set();
-      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.rotation!==undefined&&![0,90,180,270].includes(n.rotation))fail();if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>MAX_BITS))fail();if(['hub','splitter'].includes(n.type)&&width(n)<2)fail();if(n.value!==undefined&&!validValue(n.value,width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
+      for(const n of s.nodes){if(!n||!safeId(n.id)||nodeIds.has(n.id)||!types.includes(n.type)||!finite(n.x)||!finite(n.y)||!label(n.label))fail();nodeIds.add(n.id);if(n.rotation!==undefined&&![0,90,180,270].includes(n.rotation))fail();if(n.fractionBits!==undefined&&(!Number.isInteger(n.fractionBits)||n.fractionBits<0||n.fractionBits>=width(n)))fail();if(n.bits!==undefined&&(!Number.isInteger(n.bits)||n.bits<1||n.bits>MAX_BITS))fail();if(['hub','splitter'].includes(n.type)&&width(n)<1)fail();if(n.value!==undefined&&!validValue(n.value,width(n)))fail();if(n.type==='custom'&&(!safeId(n.def)||!Object.hasOwn(defs,n.def)))fail();}
       for(const w of s.wires){if(!w||!safeId(w.id)||wireIds.has(w.id))fail();wireIds.add(w.id);for(const e of [w.a,w.b]){if(!e||typeof e!=='object')fail();if(e.node){if(!nodeIds.has(e.node)||!['in','out'].includes(e.dir)||!Number.isInteger(e.port)||e.port<0)fail();const n=s.nodes.find(n=>n.id===e.node);let ps;try{ps=spec(n,defs);}catch{fail();}if(e.port>=ps[e.dir==='in'?'inputs':'outputs'].length)fail();}else if(!finite(e.x)||!finite(e.y))fail();}if(w.via!==undefined&&(!Array.isArray(w.via)||w.via.length>100||w.via.some(p=>!finite(p.x)||!finite(p.y))))fail();}
     }
     for(const id of ids){const d=defs[id];if(!d||!label(d.name)||!d.name||(d.hidden!==undefined&&typeof d.hidden!=='boolean')||!Array.isArray(d.inputs)||!Array.isArray(d.outputs)||!Array.isArray(d.nodes))fail();for(const [ps,type] of [[d.inputs,'input'],[d.outputs,'output']]){if(ps.length>16||ps.some(p=>!p)||new Set(ps.map(p=>p.id)).size!==ps.length)fail();for(const p of ps){const n=d.nodes.find(n=>n.id===p.id);if(!n||n.type!==type||p.width!==width(n)||typeof p.label!=='string'||!p.label||!label(p.label))fail();}if(d.nodes.filter(n=>n.type===type).length!==ps.length)fail();}}
@@ -463,5 +478,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {nodeFractionBits,wireFractionBits,configureNumberBits,clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });

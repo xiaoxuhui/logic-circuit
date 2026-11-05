@@ -1,4 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('../src/core.js'),E=require('../src/expanded.js');
+test('each component owns integer and fractional widths and hubs preserve all bits',()=>{
+  const s={version:1,definitions:{},nodes:[{id:'i',type:'input',bits:4,value:3,x:0,y:0},{id:'s',type:'splitter',bits:4,x:300,y:0},{id:'h',type:'hub',bits:4,x:600,y:0},{id:'o',type:'output',bits:4,x:900,y:0}],wires:[{id:'a',a:{node:'i',dir:'out',port:0},b:{node:'s',dir:'in',port:0}},...Array.from({length:4},(_,b)=>({id:'bit'+b,a:{node:'s',dir:'out',port:b},b:{node:'h',dir:'in',port:b}})),{id:'z',a:{node:'h',dir:'out',port:0},b:{node:'o',dir:'in',port:0}}]};
+  let next=s;for(const id of ['i','s','h','o'])next=C.configureNumberBits(next,null,id,2,2);
+  assert.deepEqual(next.wires,s.wires);assert.equal(C.nodeFractionBits(next.nodes[0],next),2);assert.equal(C.wireFractionBits(next,'a'),2);
+  assert.deepEqual(C.spec(next.nodes[1]).outLabels,['b-2','b-1','b0','b1']);
+  assert.deepEqual(C.simulate(next).outputs.o,C.bitArray(3,4));assert.equal((E.build(next).svg.match(/>0.75<\/text>/g)||[]).length,2);
+  next=C.configureNumberBits(next,null,'o',4,0);assert.equal(C.nodeFractionBits(next.nodes.at(-1),next),0);assert.equal(C.nodeFractionBits(next.nodes[0],next),2);
+  for(const [i,f] of [[0,2],[1,-1],[256,1],[1,0.5]])assert.throws(()=>C.configureNumberBits(next,null,'i',i,f));
+  for(const type of ['input','output','hub','splitter']){const one={version:1,definitions:{},nodes:[{id:'n',type,bits:2,x:0,y:0}],wires:[]};assert.equal(C.configureNumberBits(one,null,'n',1,0).nodes[0].bits,1);}
+  assert.equal(s.nodes[0].fractionBits,undefined);
+});
 test('binary fractional positions are exact and round-trip every eight-bit pattern in every mode',()=>{
   assert.equal(C.formatValue(C.bitArray(3,4),'unsigned',2),'0.75');
   assert.equal(C.formatValue(C.bitArray(0,8),'signed',2),'0');
