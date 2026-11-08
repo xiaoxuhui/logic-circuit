@@ -577,7 +577,7 @@
     gollyWorker?.terminate();
     gollyWorker=null;
     $('conway-golly-export').disabled=false;
-    $('conway-golly-rle').disabled=false;
+    $('conway-golly-loop').disabled=false;
   }
   $('conway-dialog').addEventListener('close',stopGollyExport);
   function startGollyExport(requested){
@@ -587,7 +587,7 @@
       const worker=new Worker(gollyWorkerURL);
       gollyWorker=worker;
       $('conway-golly-export').disabled=true;
-      $('conway-golly-rle').disabled=true;
+      $('conway-golly-loop').disabled=true;
       conwayFeedback('正在布置滑翔机线路。关闭窗口可取消。');
       worker.onmessage=({data})=>{
         if(gollyWorker!==worker||!$('conway-dialog').open)return;
@@ -600,7 +600,7 @@
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
           else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持初始值。');
           else if(data.feedback==='invert')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线会交替输出。');
-          else if(data.registers)conwayFeedback(saved+'这是单拍图案。要连续运行，请点「导出到 Golly」获取循环脚本。');
+          else if(data.registers)conwayFeedback(saved+'在 Golly 用 File → Open Pattern 打开。这是单拍图案。连续运行可另行导出桌面 Lua 脚本。');
           else conwayFeedback(saved+'已生成 '+data.outputs+' 路输出，建议在约 '+data.generation+' 代后查看。');
         }catch(error){conwayFeedback(error.message,true);}
       };
@@ -612,8 +612,8 @@
       worker.postMessage({source,format:requested});
     }catch(error){stopGollyExport();conwayFeedback(error.message,true);}
   }
-  $('conway-golly-export').onclick=()=>startGollyExport('auto');
-  $('conway-golly-rle').onclick=()=>startGollyExport('rle');
+  $('conway-golly-export').onclick=()=>startGollyExport('rle');
+  $('conway-golly-loop').onclick=()=>startGollyExport('lua');
   $('conway-golly-open').onclick=()=>window.open('https://golly.sourceforge.io/webapp/golly.html','_blank','noopener,noreferrer');
   $('conway-export').onclick=()=>{
     try{

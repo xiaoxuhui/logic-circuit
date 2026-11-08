@@ -312,9 +312,8 @@ end
 `;
   }
 
-  function exportToGolly(source, requested = 'auto') {
+  function exportToGolly(source, format = 'rle') {
     const signals = Exchange.circuitSignals(source);
-    const format = requested === 'auto' ? (signals.outputs.some(output => output.delayId) ? 'lua' : 'rle') : requested;
     if (format === 'lua') return { text: toLua(source, signals), format };
     const pattern = layoutPattern(signals, { loop: true, temporaryWires: hasTemporaryWires(source) });
     return { text: toRLE(pattern), format, outputs: pattern.outputs.length, generation: pattern.generation,

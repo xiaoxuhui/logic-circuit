@@ -50,19 +50,23 @@ test('Golly layout uses current input switches and exports delay read and next-s
   assert.throws(() => Golly.buildPattern({ version: 1, nodes: [], wires: [], definitions: {} }), /输出指示灯/);
 });
 
-test('Golly automatic export prefers a Lua script for delay circuits and keeps manual RLE available', () => {
-  const counter = Golly.exportToGolly(Presets.load('counter4'));
-  assert.equal(counter.format, 'lua');
-  assert.match(counter.text, /local state = \{0,0,0,0\}/);
+test('Golly exports actual RLE by default even for a counter and keeps Lua explicit', () => {
+  const counter = Presets.load('counter4');
+  const snapshot = Golly.exportToGolly(counter);
+  assert.equal(snapshot.format, 'rle');
+  assert.equal(snapshot.registers, 4);
+  assert.ok(decode(snapshot.text).length > 0);
+  const script = Golly.exportToGolly(counter, 'lua');
+  assert.equal(script.format, 'lua');
+  assert.match(script.text, /local state = \{0,0,0,0\}/);
   const combinational = Golly.exportToGolly(Presets.load('not'));
   assert.equal(combinational.format, 'rle');
   assert.match(combinational.text, /rule = B3\/S23/);
   const oscillator = Presets.load('oscillator');
-  assert.equal(Golly.exportToGolly(oscillator).format, 'lua');
-  const manual = Golly.exportToGolly(oscillator, 'rle');
-  assert.equal(manual.format, 'rle');
-  assert.equal(manual.feedback, 'invert');
-  assert.match(manual.text, /returns through four turns/);
+  const loop = Golly.exportToGolly(oscillator);
+  assert.equal(loop.format, 'rle');
+  assert.equal(loop.feedback, 'invert');
+  assert.match(loop.text, /returns through four turns/);
 });
 
 test('Golly marks each input bit, including zero and unused inputs', () => {

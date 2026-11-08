@@ -23,7 +23,7 @@
 <button class="component" data-add="hub"><span class="component-symbol blue">⇥</span><span><b>集线器</b><small>多根信号 → 一束总线</small></span><span class="plus">+</span></button>
 <button class="component" data-add="splitter"><span class="component-symbol blue">⇤</span><span><b>分线器</b><small>一束总线 → 按位拆分</small></span><span class="plus">+</span></button>
 <div class="group-label custom-label">我的逻辑门 <span id="custom-count">00</span></div><div id="custom-library"></div><div id="custom-empty" class="empty-custom"><span>◇</span><p>按住元件，拖到画布</p><small>搭好电路后，将它封装成<br>你自己的逻辑门。</small></div>
-<div class="library-foot"><span class="tiny-grid">✧</span><div>从 NAND 到一切<small>组合 · 测试 · 再创造</small></div><span class="version">v0.3.48</span></div></aside>
+<div class="library-foot"><span class="tiny-grid">✧</span><div>从 NAND 到一切<small>组合 · 测试 · 再创造</small></div><span class="version">v0.3.49</span></div></aside>
 <section class="canvas-wrap" aria-label="电路工作区"><div class="canvas-toolbar"><div class="tool-segment"><button id="wire-mode" class="tool active" title="布线模式 (W)">⌁ <span>布线</span></button><button id="pan-mode" class="tool" title="移动模式 (H)">✥ <span>移动</span></button></div><div class="toolbar-divider"></div><button id="undo" class="tool" title="撤销 Ctrl+Z">↶</button><button id="redo" class="tool" title="重做 Ctrl+Shift+Z">↷</button><div class="toolbar-divider"></div><button style="display:none" id="debug" class="tool" title="调试选中的逻辑门（也可右键点击门）" aria-label="调试逻辑门">⌕</button><button id="rotate" class="tool" title="顺时针旋转 90°（空格）" aria-label="右转90度">↻</button><button id="delete" class="tool" title="删除选中元件或导线 Delete">⌫</button></div>
 <button id="expand" class="expand-control" title="展开所有自定义门并实时调试，返回后保留输入变化" aria-pressed="false">全部展开</button><button id="expand-layers" class="expand-control layers-control" title="只展开指定层数，更深的逻辑门保持折叠">展开多少层</button><div id="gate-view-modes" class="gate-view-modes" role="group" aria-label="逻辑门内部模式" hidden><label class="gate-editor-name">逻辑门名称<input id="gate-definition-name" maxlength="24" autocomplete="off" aria-label="正在编辑的逻辑门名称"></label><button id="gate-mode-edit" aria-pressed="true">编辑模式</button><button id="gate-mode-view" aria-pressed="false">查看模式</button><button id="gate-mode-wire" aria-pressed="false">自定义导线模式</button></div><button id="exit-gate" class="return-control" title="退出当前逻辑门，返回原电路" hidden>退出</button><button id="back-to-circuit" class="return-control" hidden>返回原电路</button><div class="canvas-note"><span class="live-dot"></span>实时模拟 <span class="note-divider">/</span><span id="node-count">1 个元件</span></div>
 <div id="component-counts" class="component-counts" aria-label="底层元件数量" title="含自定义门内部元件，按每个实例计数"><span>与非门 <b id="nand-count">1</b></span><span>延迟线 <b id="delay-count">0</b></span><span>集线器 <b id="hub-count">0</b></span><span>分线器 <b id="splitter-count">0</b></span></div>
@@ -53,11 +53,11 @@
   <span class="eyebrow">CONWAY LIFE</span>
   <h2 id="conway-heading">康威生命游戏互通</h2>
   <p>把当前电路转换为 B3/S23 滑翔机图案。在 Golly 的 File → Open 打开 RLE 文件，观察输出标记处有没有滑翔机经过。输入也有标记，值为 0 或未参与输出的输入会放上吞噬器。</p>
-  <p>「导出到 Golly」会为含延迟线的电路优先导出 Lua 循环脚本，在桌面版 Golly 用 File → Run Script 运行。纯组合电路导出为 RLE。也可以手动导出 RLE 图案，单条延迟线直接或经非门回接时会生成闭合回路。</p>
+  <p>「导出到 Golly」始终生成网页版可打开的 RLE。单条延迟线直接或经非门回接时，RLE 会生成闭合回路。四位计数器等多延迟电路的 RLE 是单拍图案，连续运行请在桌面版 Golly 用 File → Run Script 打开另行导出的 Lua 脚本。</p>
   <label for="conway-export-name">导出文件名（可选）</label><input id="conway-export-name" maxlength="80" autocomplete="off" placeholder="留空使用默认名称，重名时自动加编号">
   <div class="dialog-actions">
-    <button id="conway-golly-export" type="button" class="primary">导出到 Golly</button>
-    <button id="conway-golly-rle" type="button" class="subtle">导出图案（RLE）</button>
+    <button id="conway-golly-export" type="button" class="primary">导出到 Golly（RLE）</button>
+    <button id="conway-golly-loop" type="button" class="subtle">导出循环脚本（桌面 Lua）</button>
     <button id="conway-golly-open" type="button" class="subtle">打开 Golly 网页版</button>
   </div>
   <p>也可以用康威生命游戏的「我的函数」交换函数库。每个输出位对应一个函数。</p>
