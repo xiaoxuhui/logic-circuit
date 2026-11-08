@@ -588,7 +588,7 @@
       gollyWorker=worker;
       $('conway-golly-export').disabled=true;
       $('conway-golly-loop').disabled=true;
-      conwayFeedback('正在布置滑翔机线路。关闭窗口可取消。');
+      conwayFeedback('正在布置信号线路。关闭窗口可取消。');
       worker.onmessage=({data})=>{
         if(gollyWorker!==worker||!$('conway-dialog').open)return;
         stopGollyExport();
@@ -598,6 +598,7 @@
           const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
           const saved='已导出「'+filename+'」。';
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
+          else if(data.period)conwayFeedback(saved+'已同步 '+data.registers+' 路回接，从第 0 代开始每 '+data.period+' 代读一拍，输出处有轻型飞船代表 1。');
           else if(data.feedback==='hold')conwayFeedback(saved+'沿固定箭头可找到四方块标记的回接输入，延迟线保持各自的初始值。');
           else if(data.feedback==='invert')conwayFeedback(saved+'沿固定箭头可找到四方块标记的回接输入，延迟线会交替输出。');
           else if(data.registers)conwayFeedback(saved+'这份图案仅显示延迟线的下一拍输出，反馈线路尚未闭合。');

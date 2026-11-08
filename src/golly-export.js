@@ -1,13 +1,13 @@
 (function(root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./conway-exchange'), require('./vendor/life-tiles'));
+    module.exports = factory(require('./conway-exchange'), require('./vendor/life-tiles'), require('./golly-timed'));
     return;
   }
   if (typeof importScripts === 'function') {
     importScripts('./core.js', './domino-model.js', './vendor/conway/logic-parse.js',
       './vendor/conway/logic-expand.js', './vendor/conway/logic-function-library.js',
-      './conway-exchange.js', './vendor/life-tiles.js');
-    const api = factory(root.LogicConwayExchange, root.LogicLifeTiles);
+      './conway-exchange.js', './vendor/life-tiles.js', './vendor/life-timed-tiles.js', './golly-timed.js');
+    const api = factory(root.LogicConwayExchange, root.LogicLifeTiles, root.LogicTimedLife);
     root.onmessage = ({ data }) => {
       try {
         root.postMessage(api.exportToGolly(data.source, data.format));
@@ -16,7 +16,7 @@
       }
     };
   }
-})(globalThis, function(Exchange, library) {
+})(globalThis, function(Exchange, library, Timed) {
   'use strict';
 
   const { tiles: Tiles, chargedTiles, notice } = library;
@@ -34,18 +34,27 @@
   const hasTemporaryWires = source => Object.keys(source.wireOverrides || {}).length > 0
     || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
-  function buildPattern(source, options = {}) {
-    return layoutPattern(Exchange.circuitSignals(source), { ...options, temporaryWires: hasTemporaryWires(source) });
-  }
-
-  function layoutPattern({ inputs, outputs }, { loop: requestLoop = false, seedRegisters = true, temporaryWires = false } = {}) {
-    const registerOutputs = outputs.filter(output => output.delayId);
-    const candidates = requestLoop && !temporaryWires ? registerOutputs.map(update => {
-      const invert = registerOutputs.length === 1 && update.expression.op === 'NOT';
+  function simpleFeedback(registers) {
+    const candidates = registers.map(update => {
+      const invert = registers.length === 1 && update.expression.op === 'NOT';
       const driver = invert ? update.expression.args[0] : update.expression;
       return driver.delayId === update.delayId ? { update, driver, invert } : null;
-    }) : [];
-    const feedbacks = candidates.every(Boolean) ? candidates : [];
+    });
+    return candidates.every(Boolean) ? candidates : [];
+  }
+
+  function buildPattern(source, options = {}, signals = Exchange.circuitSignals(source)) {
+    const updates = signals.outputs.filter(output => output.delayId);
+    const close = options.loop && !hasTemporaryWires(source);
+    const feedbacks = close ? simpleFeedback(updates) : [];
+    if (close && updates.length && !feedbacks.length) {
+      return Timed.build(Exchange.circuitSignals(source, { preserveNands: true }));
+    }
+    return layoutPattern(signals, { ...options, feedbacks });
+  }
+
+  function layoutPattern({ inputs, outputs }, { feedbacks = [], seedRegisters = true } = {}) {
+    const registerOutputs = outputs.filter(output => output.delayId);
     const feedback = feedbacks.length ? (feedbacks[0].invert ? 'invert' : 'hold') : null;
     const roots = [...feedbacks.map(item => item.driver), ...outputs.map(output => output.expression)];
     const producers = [];
@@ -256,20 +265,25 @@
       `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
-  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, returnPorts = [] }, source) {
+  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, period, returnPorts = [], gates = [] }, source) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
-      '#C Logic Workshop - Conway Life glider circuit',
-      `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
-      ...(loop ? ['#C The next-state stream returns through four turns to the delay input.',
+      '#C Logic Workshop - Conway Life circuit',
+      ...(period ? [`#C Sample the output probes at generation 0 and every ${period} generations thereafter.`,
+        '#C An eastbound lightweight spaceship at the marked output is 1.',
+        '#C Timed Life gate patterns after Myreen and Carneiro, CC BY 4.0. https://doi.org/10.4230/LIPIcs.ITP.2025.25']
+        : [`#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`]),
+      ...(loop ? [period ? '#C The next-state streams return to their synchronized delay inputs.'
+        : '#C The next-state stream returns through four turns to the delay input.',
         '#C Follow the stationary arrows to the four-block input marker. The marks are visible at either signal level.'] : []),
       ...(feedback === 'hold' ? ['#C Direct feedback preserves the delay line\'s initial bit.'] : []),
       ...returnPorts.map(({ label, output, input }) =>
         `#C Feedback ${label.replace(/[\r\n]/g, ' ')}: output (${output.x}, ${output.y}) -> delay input (${input.x}, ${input.y})`),
+      ...gates.map(({ id, label, x, y }) => `#C NAND ${id} ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`),
       ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
-      '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
-      ...notice.split('\n').map(text => `#C ${text}`),
+      ...(period ? [] : ['#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
+        ...notice.split('\n').map(text => `#C ${text}`)]),
       body, ''].join('\n');
   }
 
@@ -360,9 +374,9 @@ end
   function exportToGolly(source, format = 'rle') {
     const signals = Exchange.circuitSignals(source);
     if (format === 'lua') return { text: toLua(source, signals), format };
-    const pattern = layoutPattern(signals, { loop: true, temporaryWires: hasTemporaryWires(source) });
+    const pattern = buildPattern(source, { loop: true }, signals);
     return { text: toRLE(pattern, source), format, outputs: pattern.outputs.length, generation: pattern.generation,
-      feedback: pattern.feedback, registers: pattern.registers.length };
+      feedback: pattern.feedback, period: pattern.period, registers: pattern.registers.length };
   }
 
   return { buildPattern, toRLE, toLua, exportToGolly };

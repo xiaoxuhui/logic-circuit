@@ -40,7 +40,7 @@
     return precedence < parentPrecedence ? `(${text})` : text;
   }
 
-  function circuitSignals(source) {
+  function circuitSignals(source, { preserveNands = false } = {}) {
     let graph;
     try {
       graph = Domino.flatten(source);
@@ -71,14 +71,19 @@
       return nets.get(id);
     }
     for (const p of graph.order) {
-      expressions.set(p, negate(join('AND', net(p.inputs[0]), net(p.inputs[1]))));
+      const a = net(p.inputs[0]), b = net(p.inputs[1]);
+      if (preserveNands) {
+        const and = { op: 'AND', args: [a, b], size: a.size + b.size + 1 };
+        expressions.set(p, { op: 'NOT', args: [and], size: and.size + 1, gateId: p.id, label: p.label });
+      } else expressions.set(p, negate(join('AND', a, b)));
     }
     const outputs = [...graph.items.filter(p => p.type === 'output'), ...graph.items.filter(p => p.type === 'delay')];
     if (!outputs.length) throw Error('请先添加输出指示灯，再转换电路');
     const inputs = sourceNodes.filter(p => p.type === 'input' && !p.constant && !p.forced)
       .sort((a, b) => a.sourceY - b.sourceY || a.sourceX - b.sourceX || b.bit - a.bit)
       .map(p => ({ label: p.label, value: p.value, expression: expressions.get(p) }));
-    return { inputs, outputs: outputs.map(p => ({
+    const registers = sourceNodes.filter(p => p.type === 'delay').map(p => expressions.get(p));
+    return { inputs, registers, outputs: outputs.map(p => ({
       label: p.label + (p.type === 'delay' ? '·下一步' : ''),
       expression: net(p.inputs[0]),
       ...(p.type === 'delay' ? { delayId: p.id, initialValue: p.value } : {}),

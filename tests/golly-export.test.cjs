@@ -57,6 +57,12 @@ test('Golly exports actual RLE by default even for a counter and keeps Lua expli
   const snapshot = Golly.exportToGolly(counter);
   assert.equal(snapshot.format, 'rle');
   assert.equal(snapshot.registers, 4);
+  assert.equal(snapshot.feedback, 'timed');
+  assert.equal(snapshot.period % 60, 0);
+  assert.ok(snapshot.period > 0);
+  assert.equal([...snapshot.text.matchAll(/^#C NAND root\//gm)].length, 22);
+  assert.equal([...snapshot.text.matchAll(/^#C Feedback /gm)].length, 4);
+  assert.match(snapshot.text, new RegExp('every ' + snapshot.period + ' generations'));
   assert.ok(decode(snapshot.text).length > 0);
   const script = Golly.exportToGolly(counter, 'lua');
   assert.equal(script.format, 'lua');
