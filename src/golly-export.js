@@ -23,9 +23,14 @@
   const SIZE = 270;
   const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, stream: 8, turnUp: 12, takeLast: 13, loopTurn: 16, not: 20, tap: 21 };
   const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
+  const arrow = [[0, 0], [12, 12], [24, 24], [36, 36], [48, 48], [36, 48], [48, 36]];
   // In routing space, data travels left and trunks travel down. The actual
   // glider tracks are diagonal in Life, so both axes rotate by 45 degrees.
   const origin = (column, row) => [-SIZE * (column + row), SIZE * (row - column)];
+  function rotateInTile(x, y, rotation) {
+    for (let turn = 0; turn < rotation; turn++) [x, y] = [SIZE - 1 - y, x];
+    return [x, y];
+  }
   const hasTemporaryWires = source => Object.keys(source.wireOverrides || {}).length > 0
     || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
@@ -88,7 +93,7 @@
     const chargedRows = new Set([...returnById.values()].filter(route => route.charged).map(route => route.probe.row));
 
     const cells = [];
-    const crossings = new Map(), streams = [];
+    const crossings = new Map(), streams = [], returnArrows = [], returnPorts = [];
     const routeKey = (column, y) => `${column},${y}`;
     function cross(column, y, charged = false) {
       crossings.set(routeKey(column, y), { column, y, charged });
@@ -97,8 +102,7 @@
     function place(column, y, kind, rotation = 0, charged = false) {
       const [x0, y0] = origin(column, y);
       for (const packed of charged ? chargedTiles[kind] : Tiles[kind]) {
-        let x = packed % SIZE, localY = Math.floor(packed / SIZE);
-        for (let turn = 0; turn < rotation; turn++) [x, localY] = [SIZE - 1 - localY, x];
+        const [x, localY] = rotateInTile(packed % SIZE, Math.floor(packed / SIZE), rotation);
         cells.push([x0 + x, y0 + localY]);
       }
     }
@@ -107,6 +111,10 @@
     }
     function placeBlock(x, y) {
       cells.push([x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]);
+    }
+    function markReturn(column, y, rotation, seeded) {
+      returnArrows.push({ column, y, rotation });
+      if (seeded) seedStream(column, y, rotation);
     }
     function terminate(column, row) {
       // All terminal lanes carry southeast gliders along the tile diagonal.
@@ -171,12 +179,16 @@
           if (top < trunk.lastTap) cross(trunk.column - 1, top, charged);
         }
         if (charged) for (let x = source.column - 2; x > left; x--) seedStream(x, probe.row);
-        if (initialValue) {
-          for (let y = probe.row + 1; y < bottom; y++) seedStream(left, y, 1);
-          for (let x = left + 1; x < right; x++) seedStream(x, bottom, 2);
-          for (let y = top + 1; y < bottom; y++) seedStream(right, y, 3);
-          for (let x = source.column; x < right; x++) seedStream(x, top);
-        }
+        for (let x = probe.column - 1; x > left; x--) markReturn(x, probe.row, 0, false);
+        for (let y = probe.row + 1; y < bottom; y++) markReturn(left, y, 1, initialValue);
+        for (let x = left + 1; x < right; x++) markReturn(x, bottom, 2, initialValue);
+        for (let y = top + 1; y < bottom; y++) markReturn(right, y, 3, initialValue);
+        for (let x = source.column + 1; x < right; x++) markReturn(x, top, 0, initialValue);
+        if (initialValue) seedStream(source.column, top);
+        const [x0, y0] = origin(source.column, top);
+        const input = { x: x0 + 96, y: y0 + 168 };
+        for (const [x, y] of [[0, 0], [8, 0], [0, 8], [8, 8]]) placeBlock(input.x + x, input.y + y);
+        returnPorts.push({ label: probe.label, output: { x: probe.x, y: probe.y }, input });
       } else terminate(probe.column - 1, probe.row);
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
@@ -188,10 +200,19 @@
       // The crossing passes the vertical stream straight through. Its horizontal stream uses the charged tile.
       if (rotation === 1 || !crossings.has(routeKey(column, y))) place(column, y, tile.stream, rotation);
     }
+    for (const { column, y, rotation } of returnArrows) {
+      if (crossings.has(routeKey(column, y))) continue;
+      const [x0, y0] = origin(column, y);
+      // The mark sits beside the diagonal track, so it is visible even for a zero signal.
+      for (const [x, localY] of arrow) {
+        const [dx, dy] = rotateInTile(x + 85, localY + 145, rotation);
+        placeBlock(x0 + dx, y0 + dy);
+      }
+    }
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
     const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,
       gun: registerGuns.get(output.delayId) || null }));
-    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!feedback, feedback };
+    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!feedback, feedback, returnPorts };
   }
 
   function encodeCells(cells) {
@@ -235,14 +256,17 @@
       `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
-  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback }, source) {
+  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, returnPorts = [] }, source) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
       '#C Logic Workshop - Conway Life glider circuit',
       `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
-      ...(loop ? ['#C The next-state stream returns through four turns to the delay input.'] : []),
+      ...(loop ? ['#C The next-state stream returns through four turns to the delay input.',
+        '#C Follow the stationary arrows to the four-block input marker. The marks are visible at either signal level.'] : []),
       ...(feedback === 'hold' ? ['#C Direct feedback preserves the delay line\'s initial bit.'] : []),
+      ...returnPorts.map(({ label, output, input }) =>
+        `#C Feedback ${label.replace(/[\r\n]/g, ' ')}: output (${output.x}, ${output.y}) -> delay input (${input.x}, ${input.y})`),
       ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
       '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
       ...notice.split('\n').map(text => `#C ${text}`),

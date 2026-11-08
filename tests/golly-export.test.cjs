@@ -174,11 +174,15 @@ test('direct delay feedback holds zero or one and the seeded loop starts with a 
     source.delayState = { 'root/q': value };
     const pattern = Golly.buildPattern(source, { loop: true });
     assert.equal(pattern.feedback, 'hold');
-    assert.match(Golly.toRLE(pattern), /Direct feedback preserves/);
+    const rle = Golly.toRLE(pattern);
+    assert.match(rle, /Direct feedback preserves/);
+    assert.match(rle, /Feedback .*output .* -> delay input \(96, 168\)/);
     const probe = pattern.outputs.find(output => output.delayId);
     for (const generations of [0, 120]) {
       const live = evolvePattern(pattern.cells, generations);
       for (const [dx, dy] of probeGlider) assert.equal(live(probe.x + dx, probe.y + dy), value);
+      // The northwest arrow and the four blocks at the return input stay visible at both levels.
+      for (const [x, y] of [[-86, 2014], [-134, 1966], [96, 168], [104, 176]]) assert.equal(live(x, y), 1);
     }
   }
 });
