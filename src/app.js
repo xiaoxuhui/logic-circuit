@@ -514,7 +514,81 @@
   $('package').onclick=()=>{try{const d=C.makeDefinition(state,'新逻辑门');$('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';$('package-error').textContent='';$('package-dialog').showModal();$('gate-name').focus();}catch(e){toast(e.message);}};
   $('package-form').onsubmit=e=>{e.preventDefault();try{if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');const d=C.makeDefinition(state,$('gate-name').value);change(()=>state.definitions[uid('g')]=d);$('package-dialog').close();$('gate-name').value='';toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');}catch(e){$('package-error').textContent=e.message;}};
   $('new').onclick=()=>$('new-dialog').showModal();$('confirm-new').onclick=()=>{stopRunning();change(()=>{state={...initial(),definitions:state.definitions};selected=null;});fit(true);$('new-dialog').close();};
-  function exportAll(){const text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera},null,2);if(window.GameHubBridge&&typeof window.GameHubBridge.saveFile==='function'){if(!window.GameHubBridge.saveFile('逻辑工坊-全部存档.json',text))throw Error('宿主未受理导出');return;}const blob=new Blob([text],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');try{a.href=url;a.download='逻辑工坊-全部存档.json';document.body.append(a);a.click();}finally{a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}}
+  function downloadSave(filename,text){
+    if(typeof window.GameHubBridge?.saveFile==='function'){
+      if(!window.GameHubBridge.saveFile(filename,text))throw Error('宿主未受理导出');
+      return;
+    }
+    const blob=new Blob([text],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+    try{link.href=url;link.download=filename;document.body.append(link);link.click();}
+    finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
+  }
+  function exportAll(){
+    const text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera},null,2);
+    downloadSave('逻辑工坊-全部存档.json',text);
+  }
+  let conwayLibrary=null,conwayRead=0;
+  function conwayFeedback(message,error=false){
+    const field=$('conway-feedback');
+    field.textContent=message;
+    field.classList.toggle('error',error);
+  }
+  $('conway-exchange').onclick=()=>{
+    conwayRead++;
+    conwayLibrary=null;
+    $('conway-import-form').hidden=true;
+    conwayFeedback('');
+    $('conway-dialog').showModal();
+  };
+  $('conway-export').onclick=()=>{
+    try{
+      const exchange=window.LogicConwayExchange;
+      const library=exchange.exportFunctions(window.LogicApp.getObservationState());
+      downloadSave('逻辑工坊-康威函数库.json',exchange.serializeLibrary(library,{pretty:true}));
+      conwayFeedback('已导出 '+library.functions.length+' 个函数。');
+    }catch(error){conwayFeedback(error.message,true);}
+  };
+  $('conway-pick-file').onclick=()=>$('conway-file').click();
+  $('conway-file').onchange=async e=>{
+    const file=e.target.files[0];
+    e.target.value='';
+    if(!file)return;
+    const request=++conwayRead;
+    conwayLibrary=null;
+    $('conway-import-form').hidden=true;
+    try{
+      if(file.size>window.LogicFunctionLibrary.MAX_LIBRARY_BYTES)throw Error('函数库文件超过康威游戏的大小上限');
+      const library=window.LogicConwayExchange.parseLibrary(await file.text());
+      if(request!==conwayRead||!$('conway-dialog').open)return;
+      if(!library.functions.length)throw Error('文件中没有可导入的函数');
+      conwayLibrary=library;
+      const select=$('conway-function');
+      select.replaceChildren(new Option('全部函数（'+library.functions.length+' 项）',''));
+      for(const item of library.functions)select.add(new Option(item.name,item.id));
+      $('conway-import-form').hidden=false;
+      conwayFeedback('已读取 '+library.functions.length+' 个函数，请选择要导入的内容。');
+    }catch(error){if(request===conwayRead)conwayFeedback(error.message,true);}
+  };
+  $('conway-import-form').onsubmit=e=>{
+    e.preventDefault();
+    try{
+      if(!conwayLibrary)return;
+      if(gateEditor||expanded||gesture||placement)throw Error('请先返回主电路，再导入函数');
+      if(unreadableSave!==null||storageReadFailed)throw Error('请先恢复当前存档，再导入函数');
+      const selectedId=$('conway-function').value;
+      const ids=selectedId?[selectedId]:conwayLibrary.functions.map(item=>item.id);
+      const existing=Object.values(state.definitions);
+      if(existing.length+ids.length>80)throw Error('自定义门最多保存 80 个，请选择部分函数导入');
+      const imported=window.LogicConwayExchange.importFunctions(conwayLibrary,ids,existing.map(d=>d.name));
+      const definitions={...state.definitions};
+      for(const definition of imported)definitions[uid('g')]=definition;
+      C.validate({...state,definitions});
+      change(()=>{state.definitions=definitions;});
+      conwayLibrary=null;
+      $('conway-import-form').hidden=true;
+      conwayFeedback('已添加 '+imported.length+' 个自定义门，可从「我的逻辑门」拖到画布。');
+    }catch(error){conwayFeedback(error.message,true);}
+  };
   $('export').onclick=()=>{try{exportAll();toast('全部电路与自定义门已导出到一个存档文件');}catch{toast('导出失败，原内容已保留，请重试');}};
   $('export-clear').onclick=()=>{if(expanded||gesture||placement)return;$('export-clear-summary').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线 · '+Object.values(state.definitions).filter(d=>!d.hidden).length+' 个自定义门';$('export-clear-dialog').showModal();};
   $('confirm-export-clear').onclick=()=>{if(expanded)return;stopRunning();try{exportAll();}catch{toast('导出失败，原内容已保留，请重试');return;}change(()=>{state={version:1,nodes:[],wires:[],definitions:{}};selected=null;});$('export-clear-dialog').close();toast('已导出并全部清空；取消下载或想恢复时，按 Ctrl+Z');};

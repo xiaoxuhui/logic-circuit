@@ -27,7 +27,7 @@
         if(n.type==='custom'){const def=state.definitions[n.def],child=scope+'/'+n.id;visit(def,child,depth+1);for(const [d,ports] of [['in',def.inputs],['out',def.outputs]])ports.forEach((q,i)=>{for(let b=0;b<q.width;b++)join(p(d,i,b),port(child,q.id,d==='in'?'out':'in',0,b));});continue;}
         if(n.type==='hub'||n.type==='splitter'){for(let b=0;b<(n.bits||1);b++)join(p(n.type==='hub'?'out':'in',0,b),p(n.type==='hub'?'in':'out',b,0));continue;}
         if(scope!=='root'&&['input','output'].includes(n.type)&&!n.constant)continue;
-        for(let b=0;b<(n.type==='nand'?1:n.bits||1);b++)items.push({id:scope+'/'+n.id+':'+b,node:n.id,scope,bit:b,type:n.type,label:(n.label||{input:'输入',output:'输出',nand:'与非门',delay:'延迟线'}[n.type])+(n.bits>1?' · b'+b:''),inputs:s.inputs.map((_,i)=>p('in',i,b)),output:s.outputs.length?p('out',0,b):null,value:C.bitArray(n.type==='delay'?state.delayState?.[scope+'/'+n.id]||0:n.value||0,n.bits||1)[b],sourceY:n.y,sourceX:n.x});
+        for(let b=0;b<(n.type==='nand'?1:n.bits||1);b++)items.push({id:scope+'/'+n.id+':'+b,node:n.id,scope,bit:b,type:n.type,...(n.constant?{constant:true}:{}),label:(n.label||{input:'输入',output:'输出',nand:'与非门',delay:'延迟线'}[n.type])+(n.bits>1?' · b'+b:''),inputs:s.inputs.map((_,i)=>p('in',i,b)),output:s.outputs.length?p('out',0,b):null,value:C.bitArray(n.type==='delay'?state.delayState?.[scope+'/'+n.id]||0:n.value||0,n.bits||1)[b],sourceY:n.y,sourceX:n.x});
       }
     }
     visit(state,'root');for(const p of items){p.inputs=p.inputs.map(find);if(p.output)p.output=find(p.output);}
