@@ -6,6 +6,20 @@ const assert=require('node:assert/strict'),path=require('node:path'),C=require('
  await page.locator('[data-node=g]').click();assert.equal(await page.evaluate(()=>LogicApp.getView().instanceView),true);await page.reload();assert.equal(await page.evaluate(()=>LogicApp.getView().expanded),false);assert.equal(await page.locator('[data-node=g]').count(),1);
  for(let i=0;i<12;i++){s.nodes[0].label='版本'+i;await load(s);await page.reload();}
  backups=await page.evaluate(k=>JSON.parse(localStorage.getItem(k)),key);assert.equal(backups.length,10);const expected=JSON.parse(backups[1].text),before=await page.evaluate(()=>LogicApp.getState());await page.locator('#backups').click();assert.equal(await page.locator('[data-restore-backup]').count(),10);assert.match(await page.locator('#backup-list').textContent(),/个自定义门/);await page.locator('[data-restore-backup="1"]').click();assert.equal((await page.evaluate(()=>LogicApp.getState())).nodes[0].label,expected.nodes[0].label);await page.keyboard.press('Control+z');assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),before);
- const broken='{broken-save';const badContext=await browser.newContext();await badContext.addInitScript(text=>{if(!localStorage.getItem('test-seeded')){localStorage.setItem('logic-workshop-v1',text);localStorage.setItem('test-seeded','1');}},broken);const next=await badContext.newPage();await next.goto('http://127.0.0.1:'+server.address().port);await next.waitForTimeout(300);assert.equal(await next.evaluate(()=>localStorage.getItem('logic-workshop-v1')),broken);assert.match(await next.locator('#save-status').textContent(),/原存档已保留/);const downloadPending=next.waitForEvent('download');await next.locator('#export').click();const download=await downloadPending,body=require('fs').readFileSync(await download.path(),'utf8');assert.equal(body,broken);await next.reload();assert.equal(await next.evaluate(()=>localStorage.getItem('logic-workshop-v1')),broken);assert.deepEqual(errors,[]);
- console.log('PASS browser: immediate reload saves input, interior reload preserves root, ten timestamped backups, restore+undo, unreadable source preserved and exportable');
+ const broken='{broken-save';const badContext=await browser.newContext();await badContext.addInitScript(text=>{if(!localStorage.getItem('test-seeded')){localStorage.setItem('logic-workshop-v1',text);localStorage.setItem('test-seeded','1');}},broken);const next=await badContext.newPage();await next.goto('http://127.0.0.1:'+server.address().port);await next.waitForTimeout(300);assert.equal(await next.evaluate(()=>localStorage.getItem('logic-workshop-v1')),broken);assert.match(await next.locator('#save-status').textContent(),/原存档已保留/);const downloadPending=next.waitForEvent('download');await next.locator('#export').click();await next.locator('#confirm-export').click();const download=await downloadPending,body=require('fs').readFileSync(await download.path(),'utf8');assert.equal(body,broken);await next.reload();assert.equal(await next.evaluate(()=>localStorage.getItem('logic-workshop-v1')),broken);assert.deepEqual(errors,[]);
+ const exportNamed=async name=>{
+   await page.locator('#export').click();await page.locator('#export-name').fill(name);
+   const pending=page.waitForEvent('download');await page.locator('#confirm-export').click();return pending;
+ };
+ const first=await exportNamed('实验电路');assert.equal(first.suggestedFilename(),'实验电路.json');
+ await page.reload();const saved=await page.evaluate(()=>LogicApp.getState());
+ const second=await exportNamed('实验电路.json');assert.equal(second.suggestedFilename(),'实验电路 (2).json');
+ assert.deepEqual(JSON.parse(require('fs').readFileSync(await second.path(),'utf8')),saved);
+ await page.locator('#export-clear').click();await page.locator('#export-clear-name').fill('实验电路');
+ const pending=page.waitForEvent('download');await page.locator('#confirm-export-clear').click();
+ const third=await pending;assert.equal(third.suggestedFilename(),'实验电路 (3).json');
+ assert.deepEqual(JSON.parse(require('fs').readFileSync(await third.path(),'utf8')),saved);
+ assert.deepEqual((await page.evaluate(()=>LogicApp.getState())).nodes,[]);
+ await page.keyboard.press('Control+z');assert.deepEqual(await page.evaluate(()=>LogicApp.getState()),saved);
+ assert.deepEqual(errors,[]);console.log('PASS browser: backup restore, unreadable source export, named downloads with numbering after reload and before clearing');
 }finally{await browser.close();server.close();}})().catch(e=>{console.error(e);process.exitCode=1;server.close();});

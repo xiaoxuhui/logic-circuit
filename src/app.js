@@ -532,9 +532,17 @@
     try{link.href=url;link.download=filename;document.body.append(link);link.click();}
     finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
   }
-  function exportAll(){
+  const exportNamesKey='logic-workshop-export-names-v1',usedExportNames=new Set();
+  function exportAll(name='逻辑工坊-全部存档'){
+    try{
+      const saved=JSON.parse(localStorage.getItem(exportNamesKey)||'[]');
+      if(Array.isArray(saved))for(const key of saved)if(typeof key==='string')usedExportNames.add(key);
+    }catch{}
     const text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera},null,2);
-    downloadSave('逻辑工坊-全部存档.json',text);
+    const base=C.uniqueName(name,usedExportNames,96),filename=base+'.json';
+    try{downloadSave(filename,text);}catch(error){usedExportNames.delete(base.toUpperCase());throw error;}
+    writeStored(exportNamesKey,JSON.stringify([...usedExportNames]));
+    return filename;
   }
   let conwayLibrary=null,conwayRead=0;
   const gollyWorkerURL=new URL('golly-export.js',document.currentScript.src);
@@ -642,9 +650,24 @@
       conwayFeedback('已添加 '+imported.length+' 个自定义门，可从「我的逻辑门」拖到画布。');
     }catch(error){conwayFeedback(error.message,true);}
   };
-  $('export').onclick=()=>{try{exportAll();toast('全部电路与自定义门已导出到一个存档文件');}catch{toast('导出失败，原内容已保留，请重试');}};
-  $('export-clear').onclick=()=>{if(expanded||gesture||placement)return;$('export-clear-summary').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线 · '+Object.values(state.definitions).filter(d=>!d.hidden).length+' 个自定义门';$('export-clear-dialog').showModal();};
-  $('confirm-export-clear').onclick=()=>{if(expanded)return;stopRunning();try{exportAll();}catch{toast('导出失败，原内容已保留，请重试');return;}change(()=>{state={version:1,nodes:[],wires:[],definitions:{}};selected=null;});$('export-clear-dialog').close();toast('已导出并全部清空；取消下载或想恢复时，按 Ctrl+Z');};
+  $('export').onclick=()=>{$('export-form').reset();$('export-dialog').showModal();};
+  $('export-clear').onclick=()=>{if(expanded||gesture||placement)return;$('export-clear-form').reset();$('export-clear-summary').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线 · '+Object.values(state.definitions).filter(d=>!d.hidden).length+' 个自定义门';$('export-clear-dialog').showModal();};
+  function submitExport(e,clear=false){
+    e.preventDefault();if(clear&&expanded)return;
+    const form=e.currentTarget,field=form.elements.filename,name=field.value.trim().replace(/\.json$/i,'').trim();
+    if(/[<>:"/\\|?*\x00-\x1f]|\.$/.test(name)||/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)){
+      toast('此文件名含有系统保留的字符或名称，请换一个');field.focus();return;
+    }
+    let filename;
+    try{filename=exportAll(name||undefined);}catch{toast('导出失败，原内容已保留，请重试');return;}
+    form.closest('dialog').close();
+    if(clear&&unreadableSave===null&&!storageReadFailed){
+      stopRunning();change(()=>{state={version:1,nodes:[],wires:[],definitions:{}};selected=null;});
+      toast('已导出「'+filename+'」并清空，可按 Ctrl+Z 恢复。');
+    }else toast('已导出「'+filename+'」');
+  }
+  $('export-form').onsubmit=submitExport;
+  $('export-clear-form').onsubmit=e=>submitExport(e,true);
   function readSave(text){const next=C.validate(JSON.parse(text));C.deduplicateDefinitionNames(next.definitions);return next;}
   function importAllText(text){if(new TextEncoder().encode(text).length>2*1024*1024)throw Error('存档过大，请使用 2MB 以内的内容');const next=readSave(text);if(expanded)throw Error('全部收回后即可导入');stopRunning();pendingInputs.clear();pendingWires.clear();unreadableSave=null;storageReadFailed=false;change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('全部内容已导入，可以撤销恢复');}
   function describeDefaultSave(){const p=window.LogicPresets.list.find(p=>p.id===$('default-save-select').value);$('default-save-description').textContent=p?.description||'';}
