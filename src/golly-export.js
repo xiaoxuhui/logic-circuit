@@ -28,7 +28,8 @@
 
   const { tiles: Tiles, notice } = library;
   const SIZE = 270;
-  const tile = { and: 1, or: 2, gun: 4, sink: 5, split: 6, crossing: 7, turnUp: 12, takeLast: 13, not: 20, tap: 21 };
+  const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, turnUp: 12, takeLast: 13, not: 20, tap: 21 };
+  const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
   // In routing space, data travels left and trunks travel down. The actual
   // glider tracks are diagonal in Life, so both axes rotate by 45 degrees.
   const origin = (column, row) => [-SIZE * (column + row), SIZE * (row - column)];
@@ -89,6 +90,11 @@
         cells.push([x0 + x, y0 + localY]);
       }
     }
+    function terminate(column, row) {
+      // All terminal lanes carry southeast gliders along the tile diagonal.
+      const [x0, y0] = origin(column, row);
+      for (const [x, y] of eater) cells.push([x0 + 100 + x, y0 + 100 + y]);
+    }
     const registerGuns = new Map();
     for (const item of producers) {
       const { expression, column, row: y, index } = item;
@@ -100,7 +106,7 @@
       } else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
       if (expression.args?.length === 2) place(column, y + 1, tile.turnUp);
       place(column - 1, y, tile.split);
-      place(column - 2, y, tile.sink);
+      terminate(column - 2, y);
       for (const tap of item.taps) place(column - 1, tap, tap === item.lastTap ? tile.takeLast : tile.tap);
 
       for (const { y: trackRow, before } of item.requests) {
@@ -123,7 +129,7 @@
           for (let y = top + 1; y < bottom; y++) place(right, y, 8, 3);
           for (let x = oscillator.column; x < right; x++) place(x, top, 8);
         }
-      } else place(probe.column - 1, probe.row, tile.sink);
+      } else terminate(probe.column - 1, probe.row);
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
         cells.push([x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]);

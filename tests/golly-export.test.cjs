@@ -48,3 +48,44 @@ test('Golly layout uses current input switches and exports delay read and next-s
   assert.ok(high.cells.length > low.cells.length);
   assert.throws(() => Golly.buildPattern({ version: 1, nodes: [], wires: [], definitions: {} }), /输出指示灯/);
 });
+
+test('Golly terminates the unused splitter branch and absorbs the stream after the output probe', () => {
+  const source = {
+    version: 1, definitions: {},
+    nodes: [{ id: 'i', type: 'input', x: 0, y: 0, value: 1 }, { id: 'o', type: 'output', x: 200, y: 0 }],
+    wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
+  };
+  const { cells, outputs: [probe], generation } = Golly.buildPattern(source);
+  const xs = cells.map(([x]) => x), ys = cells.map(([, y]) => y);
+  const left = Math.min(...xs) - 20, top = Math.min(...ys) - 20;
+  const width = Math.max(...xs) - left + 21, height = Math.max(...ys) - top + 21;
+  const index = (x, y) => (y - top) * width + x - left;
+  const live = new Uint8Array(width * height), counts = new Uint8Array(live.length);
+  const neighbors = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
+  let active = [...new Set(cells.map(([x, y]) => index(x, y)))], next = [];
+  const touched = [];
+  for (const cell of active) live[cell] = 1;
+  for (let step = 0; step < generation; step++) {
+    for (const cell of active) for (const offset of neighbors) {
+      const neighbor = cell + offset;
+      if (counts[neighbor]++ === 0) touched.push(neighbor);
+    }
+    for (const cell of touched) {
+      const count = counts[cell];
+      counts[cell] = 0;
+      if (count !== 3 && !(count === 2 && live[cell])) continue;
+      const x = cell % width;
+      if (x === 0 || x === width - 1 || cell < width || cell >= live.length - width) {
+        assert.fail(`Cells escaped the circuit at generation ${step + 1}`);
+      }
+      next.push(cell);
+    }
+    for (const cell of active) live[cell] = 0;
+    for (const cell of next) live[cell] = 1;
+    touched.length = active.length = 0;
+    [active, next] = [next, active];
+  }
+  for (const [dx, dy] of [[11, 10], [11, 12], [12, 12], [12, 11], [10, 12]]) {
+    assert.equal(live[index(probe.x + dx, probe.y + dy)], 1, 'the output glider is still readable');
+  }
+});
