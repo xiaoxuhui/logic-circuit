@@ -532,18 +532,32 @@
     try{link.href=url;link.download=filename;document.body.append(link);link.click();}
     finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
   }
-  const exportNamesKey='logic-workshop-export-names-v1',usedExportNames=new Set();
-  function exportAll(name='逻辑工坊-全部存档'){
+  const exportNamesKey='logic-workshop-export-names-v1',exportNamesByFormat=new Map();
+  function readExportName(field,extension=/\.json$/i){
+    const name=field.value.trim().replace(extension,'').trim();
+    if(/[<>:"/\\|?*\x00-\x1f]|\.$/.test(name)||/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)){
+      field.focus();throw Error('此文件名含有系统保留的字符或名称，请换一个');
+    }
+    return name;
+  }
+  function downloadNamedSave(name,format,text,type){
+    const key=format==='json'?exportNamesKey:exportNamesKey+'-'+format;
+    if(!exportNamesByFormat.has(format))exportNamesByFormat.set(format,new Set());
+    const usedNames=exportNamesByFormat.get(format);
     try{
-      const saved=JSON.parse(localStorage.getItem(exportNamesKey)||'[]');
-      if(Array.isArray(saved))for(const key of saved)if(typeof key==='string')usedExportNames.add(key);
+      const saved=JSON.parse(localStorage.getItem(key)||'[]');
+      if(Array.isArray(saved))for(const name of saved)if(typeof name==='string')usedNames.add(name);
     }catch{}
-    const text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera},null,2);
-    const base=C.uniqueName(name,usedExportNames,96),filename=base+'.json';
-    try{downloadSave(filename,text);}catch(error){usedExportNames.delete(base.toUpperCase());throw error;}
-    writeStored(exportNamesKey,JSON.stringify([...usedExportNames]));
+    const base=C.uniqueName(name,usedNames,96),filename=base+'.'+format;
+    try{downloadSave(filename,text,type);}catch(error){usedNames.delete(base.toUpperCase());throw error;}
+    writeStored(key,JSON.stringify([...usedNames]));
     return filename;
   }
+  function exportAll(name='逻辑工坊-全部存档'){
+    const text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:gateEditor?gateEditor.camera:expanded?expanded.camera:camera},null,2);
+    return downloadNamedSave(name,'json',text);
+  }
+  const conwayExportName=()=>readExportName($('conway-export-name'),/\.(?:rle|lua|json)$/i);
   let conwayLibrary=null,conwayRead=0;
   const gollyWorkerURL=new URL('golly-export.js',document.currentScript.src);
   let gollyWorker=null;
@@ -568,6 +582,7 @@
   $('conway-dialog').addEventListener('close',stopGollyExport);
   function startGollyExport(format){
     try{
+      const name=conwayExportName()||(format==='lua'?'逻辑工坊-Golly循环':'逻辑工坊-康威电路');
       const source=window.LogicApp.getObservationState();
       const worker=new Worker(gollyWorkerURL);
       gollyWorker=worker;
@@ -579,15 +594,12 @@
         stopGollyExport();
         try{
           if(data.error)throw Error(data.error);
-          if(format==='lua'){
-            downloadSave('逻辑工坊-Golly循环.lua',data.text,'text/plain;charset=utf-8');
-            conwayFeedback('已导出循环脚本。在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
-          }else{
-            downloadSave('逻辑工坊-康威电路.rle',data.text,'text/plain;charset=utf-8');
-            if(data.loop)conwayFeedback('已生成闭合滑翔机回路。用 Golly 打开 RLE 并运行，输出会持续交替。');
-            else if(data.registers)conwayFeedback('已导出单拍图案。要同步写回所有延迟线，请用「导出循环脚本」。');
-            else conwayFeedback('已生成 '+data.outputs+' 路输出。用 Golly 打开 RLE，建议在约 '+data.generation+' 代后查看输出。');
-          }
+          const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
+          const saved='已导出「'+filename+'」。';
+          if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
+          else if(data.loop)conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，输出会持续交替。');
+          else if(data.registers)conwayFeedback(saved+'要同步写回所有延迟线，请用「导出循环脚本」。');
+          else conwayFeedback(saved+'已生成 '+data.outputs+' 路输出，建议在约 '+data.generation+' 代后查看。');
         }catch(error){conwayFeedback(error.message,true);}
       };
       worker.onerror=()=>{
@@ -603,10 +615,11 @@
   $('conway-golly-open').onclick=()=>window.open('https://golly.sourceforge.io/webapp/golly.html','_blank','noopener,noreferrer');
   $('conway-export').onclick=()=>{
     try{
+      const name=conwayExportName()||'逻辑工坊-康威函数库';
       const exchange=window.LogicConwayExchange;
       const library=exchange.exportFunctions(window.LogicApp.getObservationState());
-      downloadSave('逻辑工坊-康威函数库.json',exchange.serializeLibrary(library,{pretty:true}));
-      conwayFeedback('已导出 '+library.functions.length+' 个函数。');
+      const filename=downloadNamedSave(name,'json',exchange.serializeLibrary(library,{pretty:true}));
+      conwayFeedback('已导出「'+filename+'」，包含 '+library.functions.length+' 个函数。');
     }catch(error){conwayFeedback(error.message,true);}
   };
   $('conway-pick-file').onclick=()=>$('conway-file').click();
@@ -654,10 +667,9 @@
   $('export-clear').onclick=()=>{if(expanded||gesture||placement)return;$('export-clear-form').reset();$('export-clear-summary').textContent=state.nodes.length+' 个元件 · '+state.wires.length+' 根导线 · '+Object.values(state.definitions).filter(d=>!d.hidden).length+' 个自定义门';$('export-clear-dialog').showModal();};
   function submitExport(e,clear=false){
     e.preventDefault();if(clear&&expanded)return;
-    const form=e.currentTarget,field=form.elements.filename,name=field.value.trim().replace(/\.json$/i,'').trim();
-    if(/[<>:"/\\|?*\x00-\x1f]|\.$/.test(name)||/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)){
-      toast('此文件名含有系统保留的字符或名称，请换一个');field.focus();return;
-    }
+    const form=e.currentTarget;
+    let name;
+    try{name=readExportName(form.elements.filename);}catch(error){toast(error.message);return;}
     let filename;
     try{filename=exportAll(name||undefined);}catch{toast('导出失败，原内容已保留，请重试');return;}
     form.closest('dialog').close();
