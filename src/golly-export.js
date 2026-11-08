@@ -35,18 +35,14 @@
 
   function layoutPattern({ inputs, outputs }, { loop: requestLoop = false, seedRegisters = true, temporaryWires = false } = {}) {
     const registerOutputs = outputs.filter(output => output.delayId);
-    const update = registerOutputs[0];
-    let feedback = null, feedbackExpression;
-    if (requestLoop && registerOutputs.length === 1 && !temporaryWires) {
-      const inverts = update.expression.op === 'NOT';
-      const driver = inverts ? update.expression.args[0] : update.expression;
-      if (driver.delayId === update.delayId) {
-        feedback = inverts ? 'invert' : 'hold';
-        feedbackExpression = driver;
-      }
-    }
-    const roots = outputs.map(output => output.expression);
-    if (feedbackExpression) roots.unshift(feedbackExpression);
+    const candidates = requestLoop && !temporaryWires ? registerOutputs.map(update => {
+      const invert = registerOutputs.length === 1 && update.expression.op === 'NOT';
+      const driver = invert ? update.expression.args[0] : update.expression;
+      return driver.delayId === update.delayId ? { update, driver, invert } : null;
+    }) : [];
+    const feedbacks = candidates.every(Boolean) ? candidates : [];
+    const feedback = feedbacks.length ? (feedbacks[0].invert ? 'invert' : 'hold') : null;
+    const roots = [...feedbacks.map(item => item.driver), ...outputs.map(output => output.expression)];
     const producers = [];
     const signal = new Map();
     let row = 0;
@@ -76,16 +72,28 @@
       item.expression.args?.forEach((arg, port) => request(arg, item.row + port, item.index));
     }
     const sinkColumn = -3 * producers.length;
-    const feedbackSource = signal.get(feedbackExpression);
-    const chargedFeedback = feedback === 'hold' && update.initialValue;
     const probes = outputs.map(({ label, expression, delayId }, index) => {
       const y = row + index;
       request(expression, y, producers.length);
       const [x0, y0] = origin(sinkColumn, y);
       return { label, column: sinkColumn, row: y, x: x0 + 230, y: y0 + 230, ...(delayId ? { delayId } : {}) };
     });
+    const probeById = new Map(probes.filter(probe => probe.delayId).map(probe => [probe.delayId, probe]));
+    const returnById = new Map(feedbacks.map(({ update, driver, invert }, index) => {
+      const lane = feedbacks.length - 1 - index;
+      return [update.delayId, { source: signal.get(driver), probe: probeById.get(update.delayId),
+        left: sinkColumn - 1 - lane, right: 2 + lane, bottom: row + outputs.length + 1 + lane,
+        initialValue: update.initialValue, charged: !invert && !!update.initialValue }];
+    }));
+    const chargedRows = new Set([...returnById.values()].filter(route => route.charged).map(route => route.probe.row));
 
     const cells = [];
+    const crossings = new Map(), streams = [];
+    const routeKey = (column, y) => `${column},${y}`;
+    function cross(column, y, charged = false) {
+      crossings.set(routeKey(column, y), { column, y, charged });
+    }
+    function seedStream(column, y, rotation = 0) { streams.push({ column, y, rotation }); }
     function place(column, y, kind, rotation = 0, charged = false) {
       const [x0, y0] = origin(column, y);
       for (const packed of charged ? chargedTiles[kind] : Tiles[kind]) {
@@ -106,7 +114,7 @@
       placeEater(x0 + 100, y0 + 100);
     }
     const unusedSide = Math.ceil(Math.sqrt(inputs.filter(input => !signal.has(input.expression)).length));
-    const [unusedX, unusedY] = origin(3, 0);
+    const [unusedX, unusedY] = origin(Math.max(3, returnById.size + 2), 0);
     let unused = 0;
     const inputPorts = inputs.map(({ label, value, expression }) => {
       const producer = signal.get(expression);
@@ -126,47 +134,59 @@
     const registerGuns = new Map();
     for (const item of producers) {
       const { expression, column, row: y, index } = item;
+      const route = returnById.get(expression.delayId);
       const gate = { AND: tile.and, OR: tile.or, NOT: tile.not }[expression.op];
       if (gate) place(column, y, gate);
       else if (expression.delayId) {
         registerGuns.set(expression.delayId, origin(column, y));
-        if (seedRegisters && item !== feedbackSource && expression.defaultValue) place(column, y, tile.gun);
+        if (seedRegisters && !route && expression.defaultValue) place(column, y, tile.gun);
       } else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
       if (expression.args?.length === 2) place(column, y + 1, tile.turnUp);
-      const charged = chargedFeedback && item === feedbackSource;
+      const charged = route?.charged;
       place(column - 1, y, tile.split, 0, charged);
       terminate(column - 2, y);
       for (const tap of item.taps) place(column - 1, tap, tap === item.lastTap ? tile.takeLast : tile.tap, 0, charged);
       if (charged) for (let tap = y + 1; tap < item.lastTap; tap++) {
-        if (!item.taps.has(tap)) place(column - 1, tap, tile.stream, 1);
+        if (!item.taps.has(tap)) seedStream(column - 1, tap, 1);
       }
 
       for (const { y: trackRow, before } of item.requests) {
         for (let other = index + 1; other < before; other++) {
           const trunk = producers[other];
-          if (trunk.row < trackRow && trackRow < trunk.lastTap) place(trunk.column - 1, trackRow, tile.crossing);
+          if (trunk.row < trackRow && trackRow < trunk.lastTap) cross(trunk.column - 1, trackRow, chargedRows.has(trackRow));
         }
       }
     }
     for (const probe of probes) {
-      if (feedbackSource && probe.delayId === update.delayId) {
-        const left = probe.column - 1, right = 2, bottom = probe.row + 2, top = feedbackSource.row;
-        place(left, probe.row, tile.loopTurn, 0, chargedFeedback);
-        place(left, bottom, tile.loopTurn, 1, chargedFeedback);
-        place(right, bottom, tile.loopTurn, 2, chargedFeedback);
-        place(right, top, tile.loopTurn, 3, chargedFeedback);
-        if (chargedFeedback) for (let x = feedbackSource.column - 2; x > left; x--) place(x, probe.row, tile.stream);
-        if (update.initialValue) {
-          for (let y = probe.row + 1; y < bottom; y++) place(left, y, tile.stream, 1);
-          for (let x = left + 1; x < right; x++) place(x, bottom, tile.stream, 2);
-          for (let y = top + 1; y < bottom; y++) place(right, y, tile.stream, 3);
-          for (let x = feedbackSource.column; x < right; x++) place(x, top, tile.stream);
+      const route = returnById.get(probe.delayId);
+      if (route) {
+        const { left, right, bottom, source, charged, initialValue } = route, top = source.row;
+        // Each earlier register takes an outer lane. The bottom leg travels northwest.
+        place(left, probe.row, tile.loopTurn, 0, charged);
+        place(left, bottom, tile.loopTurn, 1, charged);
+        place(right, bottom, tile.loopTurn, 2, charged);
+        place(right, top, tile.loopTurn, 3, charged);
+        for (let i = 0; i < source.index; i++) {
+          const trunk = producers[i];
+          if (top < trunk.lastTap) cross(trunk.column - 1, top, charged);
+        }
+        if (charged) for (let x = source.column - 2; x > left; x--) seedStream(x, probe.row);
+        if (initialValue) {
+          for (let y = probe.row + 1; y < bottom; y++) seedStream(left, y, 1);
+          for (let x = left + 1; x < right; x++) seedStream(x, bottom, 2);
+          for (let y = top + 1; y < bottom; y++) seedStream(right, y, 3);
+          for (let x = source.column; x < right; x++) seedStream(x, top);
         }
       } else terminate(probe.column - 1, probe.row);
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
         placeBlock(x, y);
       }
+    }
+    for (const { column, y, charged } of crossings.values()) place(column, y, tile.crossing, 0, charged);
+    for (const { column, y, rotation } of streams) {
+      // The crossing passes the vertical stream straight through. Its horizontal stream uses the charged tile.
+      if (rotation === 1 || !crossings.has(routeKey(column, y))) place(column, y, tile.stream, rotation);
     }
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
     const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,

@@ -182,3 +182,17 @@ test('direct delay feedback holds zero or one and the seeded loop starts with a 
     }
   }
 });
+
+test('four self-fed delay bits use distinct return lanes and preserve their initial levels', () => {
+  const source = {
+    version: 1, definitions: {}, delayState: { 'root/q': 5 },
+    nodes: [{ id: 'q', type: 'delay', bits: 4, x: 0, y: 0 }, { id: 'o', type: 'output', bits: 4, x: 200, y: 0 }],
+    wires: ['q', 'o'].map(id => ({ id, a: { node: 'q', dir: 'out', port: 0 }, b: { node: id, dir: 'in', port: 0 } })),
+  };
+  const pattern = Golly.buildPattern(source, { loop: true });
+  assert.equal(pattern.feedback, 'hold');
+  const live = evolvePattern(pattern.cells, 120);
+  const feedback = pattern.outputs.filter(probe => probe.delayId);
+  assert.deepEqual(feedback.map(({ x, y }) => Number(probeGlider.every(([dx, dy]) => live(x + dx, y + dy)))), [1, 0, 1, 0]);
+  assert.deepEqual(JSON.parse(Exchange.readGollySave(Golly.exportToGolly(source).text)), source);
+});

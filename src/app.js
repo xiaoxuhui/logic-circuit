@@ -598,7 +598,7 @@
           const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
           const saved='已导出「'+filename+'」。';
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
-          else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持初始值。');
+          else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持各自的初始值。');
           else if(data.feedback==='invert')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线会交替输出。');
           else if(data.registers)conwayFeedback(saved+'在 Golly 用 File → Open Pattern 打开。这是单拍图案。连续运行可另行导出桌面 Lua 脚本。');
           else conwayFeedback(saved+'已生成 '+data.outputs+' 路输出，建议在约 '+data.generation+' 代后查看。');
