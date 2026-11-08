@@ -546,22 +546,31 @@
     gollyWorker?.terminate();
     gollyWorker=null;
     $('conway-golly-export').disabled=false;
+    $('conway-golly-loop').disabled=false;
   }
   $('conway-dialog').addEventListener('close',stopGollyExport);
-  $('conway-golly-export').onclick=()=>{
+  function startGollyExport(format){
     try{
       const source=window.LogicApp.getObservationState();
       const worker=new Worker(gollyWorkerURL);
       gollyWorker=worker;
       $('conway-golly-export').disabled=true;
+      $('conway-golly-loop').disabled=true;
       conwayFeedback('正在布置滑翔机线路。关闭窗口可取消。');
       worker.onmessage=({data})=>{
         if(gollyWorker!==worker||!$('conway-dialog').open)return;
         stopGollyExport();
         try{
           if(data.error)throw Error(data.error);
-          downloadSave('逻辑工坊-康威电路.rle',data.text,'text/plain;charset=utf-8');
-          conwayFeedback('已生成 '+data.outputs+' 路输出。用 Golly 打开 RLE，建议在约 '+data.generation+' 代后查看输出。');
+          if(format==='lua'){
+            downloadSave('逻辑工坊-Golly循环.lua',data.text,'text/plain;charset=utf-8');
+            conwayFeedback('已导出循环脚本。在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
+          }else{
+            downloadSave('逻辑工坊-康威电路.rle',data.text,'text/plain;charset=utf-8');
+            if(data.loop)conwayFeedback('已生成闭合滑翔机回路。用 Golly 打开 RLE 并运行，输出会持续交替。');
+            else if(data.registers)conwayFeedback('已导出单拍图案。要同步写回所有延迟线，请用「导出循环脚本」。');
+            else conwayFeedback('已生成 '+data.outputs+' 路输出。用 Golly 打开 RLE，建议在约 '+data.generation+' 代后查看输出。');
+          }
         }catch(error){conwayFeedback(error.message,true);}
       };
       worker.onerror=()=>{
@@ -569,9 +578,11 @@
         stopGollyExport();
         conwayFeedback('无法启动转换，请通过本地服务打开逻辑工坊。',true);
       };
-      worker.postMessage(source);
+      worker.postMessage({source,format});
     }catch(error){stopGollyExport();conwayFeedback(error.message,true);}
-  };
+  }
+  $('conway-golly-export').onclick=()=>startGollyExport('rle');
+  $('conway-golly-loop').onclick=()=>startGollyExport('lua');
   $('conway-golly-open').onclick=()=>window.open('https://golly.sourceforge.io/webapp/golly.html','_blank','noopener,noreferrer');
   $('conway-export').onclick=()=>{
     try{

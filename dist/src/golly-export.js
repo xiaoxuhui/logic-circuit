@@ -10,8 +10,14 @@
     const api = factory(root.LogicConwayExchange, root.LogicLifeTiles);
     root.onmessage = ({ data }) => {
       try {
-        const pattern = api.buildPattern(data);
-        root.postMessage({ text: api.toRLE(pattern), outputs: pattern.outputs.length, generation: pattern.generation });
+        const { source, format } = data;
+        if (format === 'lua') {
+          root.postMessage({ text: api.toLua(source), format });
+        } else {
+          const pattern = api.buildPattern(source, { loop: true });
+          root.postMessage({ text: api.toRLE(pattern), format, outputs: pattern.outputs.length,
+            generation: pattern.generation, loop: pattern.loop, registers: pattern.registers.length });
+        }
       } catch (error) {
         root.postMessage({ error: error.message });
       }
@@ -26,14 +32,22 @@
   // In routing space, data travels left and trunks travel down. The actual
   // glider tracks are diagonal in Life, so both axes rotate by 45 degrees.
   const origin = (column, row) => [-SIZE * (column + row), SIZE * (row - column)];
+  const hasTemporaryWires = source => Object.keys(source.wireOverrides || {}).length > 0
+    || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
-  function buildPattern(source) {
+  function buildPattern(source, { loop: requestLoop = false, seedRegisters = true } = {}) {
     const outputs = Exchange.circuitOutputs(source);
+    const registerOutputs = outputs.filter(output => output.delayId);
+    const update = registerOutputs[0];
+    const canLoop = requestLoop && registerOutputs.length === 1 && update.expression.op === 'NOT'
+      && update.expression.args[0].delayId === update.delayId && !hasTemporaryWires(source);
+    const roots = canLoop ? [update.expression.args[0], ...outputs.map(output => output.expression)]
+      : outputs.map(output => output.expression);
     const producers = [];
     const signal = new Map();
     let row = 0;
-    for (const output of outputs) {
-      const stack = [output.expression];
+    for (const root of roots) {
+      const stack = [root];
       while (stack.length) {
         const expression = stack.at(-1);
         if (signal.has(expression)) { stack.pop(); continue; }
@@ -58,23 +72,32 @@
       item.expression.args?.forEach((arg, port) => request(arg, item.row + port, item.index));
     }
     const sinkColumn = -3 * producers.length;
-    const probes = outputs.map(({ label, expression }, index) => {
+    const oscillator = canLoop ? signal.get(update.expression.args[0]) : null;
+    const probes = outputs.map(({ label, expression, delayId }, index) => {
       const y = row + index;
       request(expression, y, producers.length);
       const [x0, y0] = origin(sinkColumn, y);
-      return { label, column: sinkColumn, row: y, x: x0 + 230, y: y0 + 230 };
+      return { label, column: sinkColumn, row: y, x: x0 + 230, y: y0 + 230, ...(delayId ? { delayId } : {}) };
     });
 
     const cells = [];
-    function place(column, y, kind) {
+    function place(column, y, kind, rotation = 0) {
       const [x0, y0] = origin(column, y);
-      for (const packed of Tiles[kind]) cells.push([x0 + packed % SIZE, y0 + Math.floor(packed / SIZE)]);
+      for (const packed of Tiles[kind]) {
+        let x = packed % SIZE, localY = Math.floor(packed / SIZE);
+        for (let turn = 0; turn < rotation; turn++) [x, localY] = [SIZE - 1 - localY, x];
+        cells.push([x0 + x, y0 + localY]);
+      }
     }
+    const registerGuns = new Map();
     for (const item of producers) {
       const { expression, column, row: y, index } = item;
       const gate = { AND: tile.and, OR: tile.or, NOT: tile.not }[expression.op];
       if (gate) place(column, y, gate);
-      else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
+      else if (expression.delayId) {
+        registerGuns.set(expression.delayId, origin(column, y));
+        if (seedRegisters && item !== oscillator && expression.defaultValue) place(column, y, tile.gun);
+      } else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
       if (expression.args?.length === 2) place(column, y + 1, tile.turnUp);
       place(column - 1, y, tile.split);
       place(column - 2, y, tile.sink);
@@ -88,17 +111,31 @@
       }
     }
     for (const probe of probes) {
-      place(probe.column - 1, probe.row, tile.sink);
+      if (oscillator && probe.delayId === update.delayId) {
+        const left = probe.column - 1, right = 2, bottom = probe.row + 2, top = oscillator.row;
+        place(left, probe.row, 16);
+        place(left, bottom, 19);
+        place(right, bottom, 18);
+        place(right, top, 17);
+        if (update.initialValue) {
+          for (let y = probe.row + 1; y < bottom; y++) place(left, y, 8, 1);
+          for (let x = left + 1; x < right; x++) place(x, bottom, 8, 2);
+          for (let y = top + 1; y < bottom; y++) place(right, y, 8, 3);
+          for (let x = oscillator.column; x < right; x++) place(x, top, 8);
+        }
+      } else place(probe.column - 1, probe.row, tile.sink);
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
         cells.push([x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]);
       }
     }
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
-    return { cells, outputs: probes, generation };
+    const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,
+      gun: registerGuns.get(output.delayId) || null }));
+    return { cells, outputs: probes, registers, generation, loop: !!oscillator };
   }
 
-  function toRLE({ cells, outputs, generation }) {
+  function encodeCells(cells) {
     const rows = new Map();
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const [x, y] of cells) {
@@ -131,13 +168,99 @@
     }
     add(1, '!');
     lines.push(line);
+    return { minX, minY, body: [`x = ${maxX - minX + 1}, y = ${maxY - minY + 1}, rule = B3/S23`, ...lines].join('\n') };
+  }
+
+  function toRLE({ cells, outputs, generation, loop }) {
+    const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, '#C Logic Workshop - Conway Life glider circuit',
       `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
+      ...(loop ? ['#C The next-state stream returns through four turns to the delay input.'] : []),
       ...comments, '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
       ...notice.split('\n').map(text => `#C ${text}`),
-      `x = ${maxX - minX + 1}, y = ${maxY - minY + 1}, rule = B3/S23`, ...lines, ''].join('\n');
+      body, ''].join('\n');
   }
 
-  return { buildPattern, toRLE };
+  function toLua(source) {
+    const baseline = buildPattern({ ...source, wireOverrides: {}, scopedWireOverrides: {} }, { seedRegisters: false });
+    if (!baseline.registers.length) throw Error('当前电路没有延迟线，请使用 RLE 导出');
+    const first = hasTemporaryWires(source) ? buildPattern(source, { seedRegisters: false }) : null;
+    const registers = new Map(baseline.registers.map(({ id }, index) => [id, index + 1]));
+    function encodeFrame(pattern) {
+      const { minX, minY, body } = encodeCells(pattern.cells);
+      const guns = pattern.registers.filter(register => register.gun)
+        .map(({ id, gun }) => `{${registers.get(id)},${gun.join(',')}}`);
+      const probes = pattern.outputs.map(({ label, delayId, x, y }) => {
+        const name = JSON.stringify(label.replace(/[\x00-\x1f\x7f]/g, ' '));
+        return `{${x},${y},${registers.get(delayId) || 0},${name}}`;
+      });
+      return `{cells=g.parse([==[${body}]==],${minX},${minY}), generations=${pattern.generation},
+  guns={${guns.join(',')}},
+  probes={${probes.join(',')}}}`;
+    }
+    const gun = Tiles[tile.gun].flatMap(packed => [packed % SIZE, Math.floor(packed / SIZE)]);
+    return `-- Logic Workshop: run this script in desktop Golly (File > Run Script).
+-- Each round evolves a real B3/S23 circuit and samples every delay input before writing any register.
+-- Press Escape to stop. The original layer is left in place.
+${notice.split('\n').map(line => `-- ${line}`).join('\n')}
+local g = golly()
+if g.numlayers() >= g.maxlayers() then g.exit("Close a layer before starting the circuit.") end
+g.addlayer()
+g.new("Logic Workshop - clocked Life circuit")
+g.setalgo("HashLife")
+g.setrule("B3/S23")
+local baseline = ${encodeFrame(baseline)}
+local first = ${first ? encodeFrame(first) : 'nil'}
+local gun = {${gun.join(',')}}
+local state = {${baseline.registers.map(register => register.initialValue).join(',')}}
+local round = 0
+
+local function readBit(probe)
+  local x, y = probe[1], probe[2]
+  local cells = g.getcells({x,y,40,40})
+  if #cells == 0 then return 0 end
+  -- At a multiple of 60 generations the output lane has this glider phase.
+  for _, point in ipairs({{11,10},{11,12},{12,12},{12,11},{10,12}}) do
+    if g.getcell(x+point[1], y+point[2]) ~= 1 then
+      g.exit("Output did not settle: " .. probe[4] .. " (round " .. round .. ")")
+    end
+  end
+  return 1
+end
+
+while true do
+  local frame = first or baseline
+  local rect = g.getrect()
+  if #rect > 0 then g.select(rect); g.clear(0); g.select({}) end
+  g.setgen("0")
+  g.putcells(frame.cells)
+  for _, source in ipairs(frame.guns) do
+    if state[source[1]] == 1 then g.putcells(gun, source[2], source[3]) end
+  end
+  if round == 0 then g.fit() end
+  g.run(frame.generations)
+
+  local nextState, readings = {}, {}
+  for _, probe in ipairs(frame.probes) do
+    local value = readBit(probe)
+    if probe[3] > 0 then nextState[probe[3]] = value end
+    readings[#readings+1] = probe[4] .. "=" .. value
+  end
+  local stable = first == nil
+  for i, bit in ipairs(state) do
+    if nextState[i] ~= bit then stable = false end
+  end
+  g.show("Round " .. round .. "  state " .. table.concat(state, "") .. " -> "
+    .. table.concat(nextState, "") .. "  " .. table.concat(readings, "  ") .. (stable and "  [stable]" or ""))
+  g.update()
+  if stable then break end
+  first = nil
+  state = nextState
+  round = round + 1
+end
+`;
+  }
+
+  return { buildPattern, toRLE, toLua };
 });

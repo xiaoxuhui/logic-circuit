@@ -61,7 +61,7 @@
       let name = preferred && !occupiedNames.has(preferred) ? preferred : `I${index + 1}`;
       while (occupiedNames.has(name)) name += '_';
       occupiedNames.add(name);
-      expressions.set(p, { name, defaultValue: p.value, size: 1 });
+      expressions.set(p, { name, defaultValue: p.value, size: 1, ...(p.type === 'delay' ? { delayId: p.id } : {}) });
     }
     function net(id) {
       if (!nets.has(id)) {
@@ -78,6 +78,7 @@
     return outputs.map(p => ({
       label: p.label + (p.type === 'delay' ? '·下一步' : ''),
       expression: net(p.inputs[0]),
+      ...(p.type === 'delay' ? { delayId: p.id, initialValue: p.value } : {}),
     }));
   }
 
