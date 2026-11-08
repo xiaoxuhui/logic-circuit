@@ -577,29 +577,30 @@
     gollyWorker?.terminate();
     gollyWorker=null;
     $('conway-golly-export').disabled=false;
-    $('conway-golly-loop').disabled=false;
+    $('conway-golly-rle').disabled=false;
   }
   $('conway-dialog').addEventListener('close',stopGollyExport);
-  function startGollyExport(format){
+  function startGollyExport(requested){
     try{
-      const name=conwayExportName()||(format==='lua'?'逻辑工坊-Golly循环':'逻辑工坊-康威电路');
+      const customName=conwayExportName();
       const source=window.LogicApp.getObservationState();
       const worker=new Worker(gollyWorkerURL);
       gollyWorker=worker;
       $('conway-golly-export').disabled=true;
-      $('conway-golly-loop').disabled=true;
+      $('conway-golly-rle').disabled=true;
       conwayFeedback('正在布置滑翔机线路。关闭窗口可取消。');
       worker.onmessage=({data})=>{
         if(gollyWorker!==worker||!$('conway-dialog').open)return;
         stopGollyExport();
         try{
           if(data.error)throw Error(data.error);
+          const {format}=data,name=customName||(format==='lua'?'逻辑工坊-Golly循环':'逻辑工坊-康威电路');
           const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
           const saved='已导出「'+filename+'」。';
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
           else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持初始值。');
           else if(data.feedback==='invert')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线会交替输出。');
-          else if(data.registers)conwayFeedback(saved+'要同步写回所有延迟线，请用「导出循环脚本」。');
+          else if(data.registers)conwayFeedback(saved+'这是单拍图案。要连续运行，请点「导出到 Golly」获取循环脚本。');
           else conwayFeedback(saved+'已生成 '+data.outputs+' 路输出，建议在约 '+data.generation+' 代后查看。');
         }catch(error){conwayFeedback(error.message,true);}
       };
@@ -608,11 +609,11 @@
         stopGollyExport();
         conwayFeedback('无法启动转换，请通过本地服务打开逻辑工坊。',true);
       };
-      worker.postMessage({source,format});
+      worker.postMessage({source,format:requested});
     }catch(error){stopGollyExport();conwayFeedback(error.message,true);}
   }
-  $('conway-golly-export').onclick=()=>startGollyExport('rle');
-  $('conway-golly-loop').onclick=()=>startGollyExport('lua');
+  $('conway-golly-export').onclick=()=>startGollyExport('auto');
+  $('conway-golly-rle').onclick=()=>startGollyExport('rle');
   $('conway-golly-open').onclick=()=>window.open('https://golly.sourceforge.io/webapp/golly.html','_blank','noopener,noreferrer');
   $('conway-export').onclick=()=>{
     try{

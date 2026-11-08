@@ -10,14 +10,7 @@
     const api = factory(root.LogicConwayExchange, root.LogicLifeTiles);
     root.onmessage = ({ data }) => {
       try {
-        const { source, format } = data;
-        if (format === 'lua') {
-          root.postMessage({ text: api.toLua(source), format });
-        } else {
-          const pattern = api.buildPattern(source, { loop: true });
-          root.postMessage({ text: api.toRLE(pattern), format, outputs: pattern.outputs.length,
-            generation: pattern.generation, feedback: pattern.feedback, registers: pattern.registers.length });
-        }
+        root.postMessage(api.exportToGolly(data.source, data.format));
       } catch (error) {
         root.postMessage({ error: error.message });
       }
@@ -36,12 +29,15 @@
   const hasTemporaryWires = source => Object.keys(source.wireOverrides || {}).length > 0
     || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
-  function buildPattern(source, { loop: requestLoop = false, seedRegisters = true } = {}) {
-    const { inputs, outputs } = Exchange.circuitSignals(source);
+  function buildPattern(source, options = {}) {
+    return layoutPattern(Exchange.circuitSignals(source), { ...options, temporaryWires: hasTemporaryWires(source) });
+  }
+
+  function layoutPattern({ inputs, outputs }, { loop: requestLoop = false, seedRegisters = true, temporaryWires = false } = {}) {
     const registerOutputs = outputs.filter(output => output.delayId);
     const update = registerOutputs[0];
     let feedback = null, feedbackExpression;
-    if (requestLoop && registerOutputs.length === 1 && !hasTemporaryWires(source)) {
+    if (requestLoop && registerOutputs.length === 1 && !temporaryWires) {
       const inverts = update.expression.op === 'NOT';
       const driver = inverts ? update.expression.args[0] : update.expression;
       if (driver.delayId === update.delayId) {
@@ -232,10 +228,13 @@
       body, ''].join('\n');
   }
 
-  function toLua(source) {
-    const baseline = buildPattern({ ...source, wireOverrides: {}, scopedWireOverrides: {} }, { seedRegisters: false });
-    if (!baseline.registers.length) throw Error('当前电路没有延迟线，请使用 RLE 导出');
-    const first = hasTemporaryWires(source) ? buildPattern(source, { seedRegisters: false }) : null;
+  function toLua(source, signals = Exchange.circuitSignals(source)) {
+    if (!signals.outputs.some(output => output.delayId)) throw Error('当前电路没有延迟线，请使用 RLE 导出');
+    const temporaryWires = hasTemporaryWires(source);
+    const baseline = temporaryWires
+      ? buildPattern({ ...source, wireOverrides: {}, scopedWireOverrides: {} }, { seedRegisters: false })
+      : layoutPattern(signals, { seedRegisters: false });
+    const first = temporaryWires ? layoutPattern(signals, { seedRegisters: false }) : null;
     const registers = new Map(baseline.registers.map(({ id }, index) => [id, index + 1]));
     function encodeFrame(pattern) {
       const { minX, minY, body } = encodeCells(pattern.cells);
@@ -313,5 +312,14 @@ end
 `;
   }
 
-  return { buildPattern, toRLE, toLua };
+  function exportToGolly(source, requested = 'auto') {
+    const signals = Exchange.circuitSignals(source);
+    const format = requested === 'auto' ? (signals.outputs.some(output => output.delayId) ? 'lua' : 'rle') : requested;
+    if (format === 'lua') return { text: toLua(source, signals), format };
+    const pattern = layoutPattern(signals, { loop: true, temporaryWires: hasTemporaryWires(source) });
+    return { text: toRLE(pattern), format, outputs: pattern.outputs.length, generation: pattern.generation,
+      feedback: pattern.feedback, registers: pattern.registers.length };
+  }
+
+  return { buildPattern, toRLE, toLua, exportToGolly };
 });
