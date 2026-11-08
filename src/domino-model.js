@@ -125,7 +125,6 @@
     function connect(from,to,points,kind='wire'){const ids=chain([bones[from],...points,bones[to]],kind,true);if(ids.length){bones[from].next.push(ids[0]);bones[ids.at(-1)].next.push(to);}else bones[from].next.push(to);return ids.length+1;}
     function place(e,x,y){const start=bones.length,mStart=modules.length,r=placeRaw(e,x,y);instances.push({expression:e,start,end:bones.length,pin:r.pin,mStart,mEnd:modules.length});return r;}
     function placeRaw(e,x,y){
-      if(bones.length>1000000)throw Error('当前无交叉摆放超过一百万张骨牌');
       if(e.nand)placedGateCount++;
       if(e.type==='one'){const pin=bone(x+50,y+e.h/2,'clock');constantPins.push(pin);return {pin,ready:1};}
       if(e.type==='input'||e.type==='delay'){const pin=bone(x+50,y+e.h/2,e.type);if(e.item)e.item.pins.push(pin);modules.push({x:x+25,y:y+e.h/2,label:e.item?.label||'0',type:e.type});return {pin,ready:1};}
@@ -205,7 +204,6 @@
       if(coil){const {left,right,rows,bottom}=coil;via.push({x:-900,y:leaf.y+300},{x:left,y:leaf.y+300});via.push({x:left,y:leaf.y+400});for(let j=0;j<=rows;j++){const edge=j%2?left:right;via.push({x:edge,y:leaf.y+400+j*48});if(j<rows)via.push({x:edge,y:leaf.y+400+(j+1)*48});}via.push({x:target.x-90,y:bottom},{x:target.x-90,y:leaf.y});}
       else via.push({x:target.x-90,y:leaf.y});
       if(!leaf.clock){via.length=2;via.push({x:-900,y:leaf.y});}connect(head,leaf.pin,via);pins=retire?next.slice(0,-1):next;if(retire)order.pop();remaining.set(leaf.index,remaining.get(leaf.index)-1);y+=180;
-      if(bones.length>1000000)throw Error('单源分岔布局超过一百万张骨牌');
     }
     board.modules=modules;board.crossovers=crossings;board.sharedBranches=leaves.length-new Set(leaves.map(p=>p.index)).size;board.singleOrigin=true;
     board.sourceBus=true;board.orderedInputs=orderedInputs;

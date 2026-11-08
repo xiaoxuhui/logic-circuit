@@ -3,14 +3,14 @@
   if(typeof importScripts==='function'){const controller=api.createController(data=>root.postMessage(data));root.onmessage=e=>controller.handle(e.data);}
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
-  const EMPTY=0,WIRE=1,HEAD=2,TAIL=3,MAX_CELLS=200000,COLORS=['#000000','#f59e0b','#2684ff','#ffffff'];
+  const EMPTY=0,WIRE=1,HEAD=2,TAIL=3,COLORS=['#000000','#f59e0b','#2684ff','#ffffff'];
   const key=(x,y)=>x+','+y,position=value=>Number.isSafeInteger(value)&&Math.abs(value)<=1000000000;
-  function validate(cells){if(!Array.isArray(cells)||cells.length>MAX_CELLS)throw Error('图案最多支持20万个非空格');const seen=new Set();for(const p of cells){if(!Array.isArray(p)||p.length!==3||!position(p[0])||!position(p[1])||!Number.isInteger(p[2])||p[2]<0||p[2]>3||seen.has(key(p[0],p[1])))throw Error('电线世界图案格式不正确');seen.add(key(p[0],p[1]));}return cells;}
+  function validate(cells){if(!Array.isArray(cells))throw Error('电线世界图案格式不正确');const seen=new Set();for(const p of cells){if(!Array.isArray(p)||p.length!==3||!position(p[0])||!position(p[1])||!Number.isInteger(p[2])||p[2]<0||p[2]>3||seen.has(key(p[0],p[1])))throw Error('电线世界图案格式不正确');seen.add(key(p[0],p[1]));}return cells;}
   class World{
     constructor(pattern={cells:[]}){if(!pattern||typeof pattern!=='object'||Array.isArray(pattern)||!Array.isArray(pattern.cells)||pattern.kind!==undefined&&pattern.kind!=='wireworld')throw Error('请使用电线世界图案');if(pattern.version!==undefined&&pattern.version!==1)throw Error('不支持这个图案版本');this._cells=new Map();this.neighbours=new Map();this.topology=null;this.heads=new Set();this.tails=new Set();this.generation=Number.isSafeInteger(pattern.generation)&&pattern.generation>=0?pattern.generation:0;this.edit(pattern.cells);}
     get cells(){const t=this.topology;if(t?.dirty){for(let i=0;i<t.ids.length;i++)this._cells.set(t.ids[i],t.states[i]);t.dirty=false;}return this._cells;}
     get(x,y){const id=key(x,y),t=this.topology;return t?(t.states[t.index.get(id)]||EMPTY):(this._cells.get(id)||EMPTY);}
-    edit(cells){validate(cells);void this.cells;this.topology=null;let size=this.cells.size;for(const [x,y,state] of cells){const previous=this.get(x,y);if(!previous&&state)size++;if(previous&&!state)size--;}if(size>MAX_CELLS)throw Error('图案最多支持20万个非空格');if(cells.some(([x,y,state])=>this.cells.has(key(x,y))!==!!state))this.neighbours.clear();const changes=[];for(const [x,y,state] of cells){const id=key(x,y);if(this.get(x,y)===state)continue;if(state)this.cells.set(id,state);else this.cells.delete(id);this.heads.delete(id);this.tails.delete(id);if(state===HEAD)this.heads.add(id);if(state===TAIL)this.tails.add(id);changes.push([x,y,state]);}return changes;}
+    edit(cells){validate(cells);void this.cells;this.topology=null;if(cells.some(([x,y,state])=>this.cells.has(key(x,y))!==!!state))this.neighbours.clear();const changes=[];for(const [x,y,state] of cells){const id=key(x,y);if(this.get(x,y)===state)continue;if(state)this.cells.set(id,state);else this.cells.delete(id);this.heads.delete(id);this.tails.delete(id);if(state===HEAD)this.heads.add(id);if(state===TAIL)this.tails.add(id);changes.push([x,y,state]);}return changes;}
     step(collect=true){
       if(!this.topology){const ids=[...this.cells.keys()],index=new Map(ids.map((id,i)=>[id,i])),coords=ids.map(id=>id.split(',').map(Number)),states=Uint8Array.from(ids,id=>this.cells.get(id)),neighbours=new Int32Array(ids.length*8).fill(-1);for(let i=0;i<ids.length;i++){const [x,y]=coords[i];let k=i*8;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(dx||dy)neighbours[k++]=index.get(key(x+dx,y+dy))??-1;}this.topology={ids,index,coords,states,neighbours,counts:new Uint8Array(ids.length),heads:[...this.heads].map(id=>index.get(id)),tails:[...this.tails].map(id=>index.get(id))};}
       const t=this.topology,touched=[],next=[],changes=[],headIds=new Set(),counts=t.counts;
@@ -22,7 +22,7 @@
     status(){return {generation:this.generation,total:this._cells.size,heads:this.heads.size,tails:this.tails.size,wires:this._cells.size-this.heads.size-this.tails.size,stable:!this.heads.size&&!this.tails.size};}
     snapshot(){return {version:1,kind:'wireworld',generation:this.generation,cells:[...this.cells].map(([id,state])=>[...id.split(',').map(Number),state])};}
   }
-  function line(x0,y0,x1,y1){if(![x0,y0,x1,y1].every(position)||Math.max(Math.abs(x1-x0),Math.abs(y1-y0))>=MAX_CELLS)throw Error('请放大画布后再绘制长线');const cells=[],dx=Math.abs(x1-x0),sx=x0<x1?1:-1,dy=-Math.abs(y1-y0),sy=y0<y1?1:-1;let error=dx+dy;while(true){cells.push([x0,y0]);if(x0===x1&&y0===y1)break;const e=2*error;if(e>=dy){error+=dy;x0+=sx;}if(e<=dx){error+=dx;y0+=sy;}}return cells;}
+  function line(x0,y0,x1,y1){if(![x0,y0,x1,y1].every(position))throw Error('导线坐标无效');const cells=[],dx=Math.abs(x1-x0),sx=x0<x1?1:-1,dy=-Math.abs(y1-y0),sy=y0<y1?1:-1;let error=dx+dy;while(true){cells.push([x0,y0]);if(x0===x1&&y0===y1)break;const e=2*error;if(e>=dy){error+=dy;x0+=sx;}if(e<=dx){error+=dx;y0+=sy;}}return cells;}
   function sample(name='signal'){
     const cells=new Map(),put=(x,y,state=WIRE)=>cells.set(key(x,y),[x,y,state]);
     if(name==='signal'){for(let x=-24;x<=24;x++)put(x,0);put(-23,0,TAIL);put(-22,0,HEAD);}
@@ -61,5 +61,5 @@
       else if(d.type==='reset'){stop();if(compiled){world=new World(compiler.activate(compiled,values));readPorts();}else{remember();world=new World({...baseline,generation:0});}emit([],true);}
     }catch(error){stop();emit();send({error:error.message});}}};
   }
-  return {EMPTY,WIRE,HEAD,TAIL,COLORS,MAX_CELLS,World,line,sample,toRLE,createController};
+  return {EMPTY,WIRE,HEAD,TAIL,COLORS,World,line,sample,toRLE,createController};
 });

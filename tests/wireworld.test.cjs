@@ -15,8 +15,12 @@ test('signal, physical fork and bevelled closed loop evolve from the same rules'
   const branch=new W.World(W.sample('branch'));for(let i=0;i<20;i++)branch.step();assert.equal(branch.heads.size,2);assert.equal(branch.get(8,-8),W.HEAD);assert.equal(branch.get(8,8),W.HEAD);
   const loop=new W.World(W.sample('loop'));for(let i=0;i<500;i++){loop.step();assert.equal(loop.heads.size,1);assert.equal(loop.tails.size,1);}assert.equal(loop.cells.size,48);
 });
-test('edits and imports validate atomically, preserve negative coordinates and bound long strokes',()=>{
-  const world=new W.World({cells:[[-1000000,-1000000,W.WIRE]]}),before=world.snapshot();assert.throws(()=>world.edit([[1,1,W.HEAD],[2,2,9]]));assert.deepEqual(world.snapshot(),before);assert.throws(()=>new W.World({cells:[[0,0,1],[0,0,2]]}));assert.throws(()=>new W.World({nodes:[],wires:[]}));assert.throws(()=>W.line(0,0,10000000,0));assert.deepEqual(W.line(-2,-2,2,2),[[-2,-2],[-1,-1],[0,0],[1,1],[2,2]]);world.edit([[-1000000,-1000000,W.EMPTY]]);assert.equal(world.cells.size,0);
+test('edits and imports validate atomically, preserve negative coordinates and allow long strokes',()=>{
+  const world=new W.World({cells:[[-1000000,-1000000,W.WIRE]]}),before=world.snapshot();assert.throws(()=>world.edit([[1,1,W.HEAD],[2,2,9]]));assert.deepEqual(world.snapshot(),before);assert.throws(()=>new W.World({cells:[[0,0,1],[0,0,2]]}));assert.throws(()=>new W.World({nodes:[],wires:[]}));assert.throws(()=>W.line(0,0,1.5,0));assert.deepEqual(W.line(-2,-2,2,2),[[-2,-2],[-1,-1],[0,0],[1,1],[2,2]]);world.edit([[-1000000,-1000000,W.EMPTY]]);assert.equal(world.cells.size,0);
+  const large=W.line(0,0,200000,0).map(([x,y])=>[x,y,W.WIRE]);
+  world.edit(large);assert.equal(world.status().total,200001);
+  const imported=new W.World({cells:large});assert.equal(imported.get(200000,0),W.WIRE);
+  assert.match(W.toRLE({cells:large}),/200001C/);
 });
 test('controller reset remembers the edited starting field and invalid loads do not replace it',()=>{
   let last;const controller=W.createController(data=>{last=data;});try{const pattern=W.sample('signal');controller.handle({type:'load',pattern});controller.handle({type:'edit',cells:[[0,3,W.HEAD],[1,3,W.TAIL]]});const expected=new W.World({...pattern,cells:[...pattern.cells,[0,3,W.HEAD],[1,3,W.TAIL]]});controller.handle({type:'step'});controller.handle({type:'reset'});assert.deepEqual(sorted(last.pattern),sorted(expected.snapshot()));controller.handle({type:'load',pattern:{nodes:[]}});assert.ok(last.error);}finally{controller.destroy();}
