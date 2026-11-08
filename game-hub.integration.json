@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "logic-circuit",
   "displayName": "逻辑工坊",
-  "version": "0.3.39",
+  "version": "0.3.40",
   "directory": "dist",
   "entryPage": "index.html",
   "files": [
@@ -18,6 +18,8 @@
     "src/minecraft-view.js",
     "src/domino-model.js",
     "src/conway-exchange.js",
+    "src/golly-export.js",
+    "src/vendor/life-tiles.js",
     "src/vendor/conway/logic-parse.js",
     "src/vendor/conway/logic-expand.js",
     "src/vendor/conway/logic-function-library.js",

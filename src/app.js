@@ -514,12 +514,12 @@
   $('package').onclick=()=>{try{const d=C.makeDefinition(state,'新逻辑门');$('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';$('package-error').textContent='';$('package-dialog').showModal();$('gate-name').focus();}catch(e){toast(e.message);}};
   $('package-form').onsubmit=e=>{e.preventDefault();try{if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');const d=C.makeDefinition(state,$('gate-name').value);change(()=>state.definitions[uid('g')]=d);$('package-dialog').close();$('gate-name').value='';toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');}catch(e){$('package-error').textContent=e.message;}};
   $('new').onclick=()=>$('new-dialog').showModal();$('confirm-new').onclick=()=>{stopRunning();change(()=>{state={...initial(),definitions:state.definitions};selected=null;});fit(true);$('new-dialog').close();};
-  function downloadSave(filename,text){
+  function downloadSave(filename,text,type='application/json'){
     if(typeof window.GameHubBridge?.saveFile==='function'){
       if(!window.GameHubBridge.saveFile(filename,text))throw Error('宿主未受理导出');
       return;
     }
-    const blob=new Blob([text],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+    const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),link=document.createElement('a');
     try{link.href=url;link.download=filename;document.body.append(link);link.click();}
     finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
   }
@@ -528,6 +528,8 @@
     downloadSave('逻辑工坊-全部存档.json',text);
   }
   let conwayLibrary=null,conwayRead=0;
+  const gollyWorkerURL=new URL('golly-export.js',document.currentScript.src);
+  let gollyWorker=null;
   function conwayFeedback(message,error=false){
     const field=$('conway-feedback');
     field.textContent=message;
@@ -540,6 +542,37 @@
     conwayFeedback('');
     $('conway-dialog').showModal();
   };
+  function stopGollyExport(){
+    gollyWorker?.terminate();
+    gollyWorker=null;
+    $('conway-golly-export').disabled=false;
+  }
+  $('conway-dialog').addEventListener('close',stopGollyExport);
+  $('conway-golly-export').onclick=()=>{
+    try{
+      const source=window.LogicApp.getObservationState();
+      const worker=new Worker(gollyWorkerURL);
+      gollyWorker=worker;
+      $('conway-golly-export').disabled=true;
+      conwayFeedback('正在布置滑翔机线路。关闭窗口可取消。');
+      worker.onmessage=({data})=>{
+        if(gollyWorker!==worker||!$('conway-dialog').open)return;
+        stopGollyExport();
+        try{
+          if(data.error)throw Error(data.error);
+          downloadSave('逻辑工坊-康威电路.rle',data.text,'text/plain;charset=utf-8');
+          conwayFeedback('已生成 '+data.outputs+' 路输出。用 Golly 打开 RLE，建议在约 '+data.generation+' 代后查看输出。');
+        }catch(error){conwayFeedback(error.message,true);}
+      };
+      worker.onerror=()=>{
+        if(gollyWorker!==worker)return;
+        stopGollyExport();
+        conwayFeedback('无法启动转换，请通过本地服务打开逻辑工坊。',true);
+      };
+      worker.postMessage(source);
+    }catch(error){stopGollyExport();conwayFeedback(error.message,true);}
+  };
+  $('conway-golly-open').onclick=()=>window.open('https://golly.sourceforge.io/webapp/golly.html','_blank','noopener,noreferrer');
   $('conway-export').onclick=()=>{
     try{
       const exchange=window.LogicConwayExchange;

@@ -40,12 +40,12 @@
     return precedence < parentPrecedence ? `(${text})` : text;
   }
 
-  function exportFunctions(source) {
+  function circuitOutputs(source) {
     let graph;
     try {
       graph = Domino.flatten(source);
     } catch (error) {
-      if (error.message.includes('反馈环')) throw Error('无延迟线的反馈环无法导出为康威逻辑函数');
+      if (error.message.includes('反馈环')) throw Error('请用延迟线断开反馈环，再转换为康威生命游戏');
       throw error;
     }
     const expressions = new Map(), nets = new Map();
@@ -74,14 +74,20 @@
       expressions.set(p, negate(join('AND', net(p.inputs[0]), net(p.inputs[1]))));
     }
     const outputs = [...graph.items.filter(p => p.type === 'output'), ...graph.items.filter(p => p.type === 'delay')];
-    if (!outputs.length) throw Error('请先添加输出指示灯，再导出康威函数');
+    if (!outputs.length) throw Error('请先添加输出指示灯，再转换电路');
+    return outputs.map(p => ({
+      label: p.label + (p.type === 'delay' ? '·下一步' : ''),
+      expression: net(p.inputs[0]),
+    }));
+  }
+
+  function exportFunctions(source) {
+    const outputs = circuitOutputs(source);
     if (outputs.length > Library.MAX_FUNCTIONS) {
       throw Error(`康威函数库最多容纳 ${Library.MAX_FUNCTIONS} 项。请导出较小的子电路。`);
     }
     const usedNames = new Set();
-    const functions = outputs.map(p => {
-      const label = p.label + (p.type === 'delay' ? '·下一步' : '');
-      const expression = net(p.inputs[0]);
+    const functions = outputs.map(({ label, expression }) => {
       const inputs = new Map();
       try {
         if (expression.size > Parse.MAX_SOURCE_LENGTH) throw Error('表达式超过康威游戏的 200 字符限制');
@@ -192,5 +198,5 @@
     });
   }
 
-  return { exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
+  return { circuitOutputs, exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
 });
