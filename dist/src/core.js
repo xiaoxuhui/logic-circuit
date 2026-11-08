@@ -383,6 +383,24 @@
     };
     count.invalidate=()=>{entries.clear();knownDefinitions=new Map();rootKey=null;};count.stats={};return count;
   }
+  function uniqueName(name,used,limit=24){
+    let result=name.slice(0,limit);
+    const base=name.replace(/ \((?:[2-9]|[1-9]\d+)\)$/,'');
+    for(let index=2;used.has(result.toUpperCase());index++){
+      const suffix=` (${index})`;
+      result=base.slice(0,limit-suffix.length).replace(/[\uD800-\uDBFF]$/,'').trimEnd()+suffix;
+    }
+    used.add(result.toUpperCase());
+    return result;
+  }
+  function deduplicateDefinitionNames(definitions){
+    const list=Object.values(definitions),used=new Set(list.map(d=>d.name.toUpperCase())),seen=new Set();
+    for(const d of list){
+      const key=d.name.toUpperCase();
+      if(seen.has(key))d.name=uniqueName(d.name,used);
+      else seen.add(key);
+    }
+  }
   function makeDefinition(state,name){
     name=String(name).trim();if(!name||name.length>24)throw Error('名称请输入 1–24 个字');
     const sorted=state.nodes.slice().sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id));
@@ -485,5 +503,5 @@
     if(raw.camera&&(!finite(raw.camera.x)||!finite(raw.camera.y)||!Number.isFinite(raw.camera.scale)||raw.camera.scale<0.2||raw.camera.scale>2.5))fail();
     return clone(raw);
   }
-  return {setConstantValue,gateDisplayName,nodeFractionBits,wireFractionBits,configureNumberBits,clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
+  return {setConstantValue,gateDisplayName,nodeFractionBits,wireFractionBits,configureNumberBits,clone,spec,baseSize,size,rotatedPoint,rotationTransform,ports,key,anchor,points,route,wireOverlaps,wireHitsGate,wireNearPort,project,distance,nets,simulate,createSimulator,createSimulationContext,step,resetDelays,delayRegisters,setDelayValue,definitionInfo,countComponents,createComponentCounter,uniqueName,deduplicateDefinitionNames,makeDefinition,updateDefinition,gateReplacementInfo,replaceGate,resizeComponentBits,pruneDefinitions,deleteDefinition,validate,bitArray,packBits,decimal,formatValue,parseSignal,DISPLAY_FORMATS,MAX_BITS,MAX_DEPTH};
 });

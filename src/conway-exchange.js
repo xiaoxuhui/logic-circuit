@@ -96,7 +96,7 @@
         // The destination requires a gate even for a direct wire or a fixed output.
         if (!expression.op) code = `!!${code}`;
         const item = Library.createFunction({
-          name: uniqueName(`工坊·${label}`, usedNames, Library.MAX_NAME_LENGTH), code,
+          name: Core.uniqueName(`工坊·${label}`, usedNames, Library.MAX_NAME_LENGTH), code,
           inputs: [...inputs].map(([name, defaultValue]) => ({ name, defaultValue })),
         });
         Expand.instantiateFunction(item, Object.fromEntries(inputs));
@@ -106,16 +106,6 @@
       }
     });
     return Library.createLibrary(functions);
-  }
-
-  function uniqueName(name, used, limit) {
-    let result = name.slice(0, limit);
-    for (let index = 2; used.has(result.toUpperCase()); index++) {
-      const suffix = ` (${index})`;
-      result = name.slice(0, limit - suffix.length) + suffix;
-    }
-    used.add(result.toUpperCase());
-    return result;
   }
 
   function callableDefinitions(library) {
@@ -192,7 +182,7 @@
     const selected = new Set(ids);
     return library.functions.filter(item => selected.has(item.id)).map(item => {
       try {
-        return compileFunction(item, callable, uniqueName(item.name, used, 24));
+        return compileFunction(item, callable, Core.uniqueName(item.name, used));
       } catch (error) {
         throw Error(`“${item.name}”无法导入：${error.message}`);
       }
