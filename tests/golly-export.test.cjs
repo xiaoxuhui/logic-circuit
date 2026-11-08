@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const Core = require('../src/core');
+const Exchange = require('../src/conway-exchange');
 const Golly = require('../src/golly-export');
 const Presets = require('../src/presets');
 
@@ -50,12 +52,12 @@ test('Golly layout uses current input switches and exports delay read and next-s
   assert.throws(() => Golly.buildPattern({ version: 1, nodes: [], wires: [], definitions: {} }), /输出指示灯/);
 });
 
-test('Golly exports RLE by default and keeps Lua explicit', () => {
+test('Golly exports actual RLE by default even for a counter and keeps Lua explicit', () => {
   const counter = Presets.load('counter4');
-  const rle = Golly.exportToGolly(counter);
-  assert.equal(rle.format, 'rle');
-  assert.equal(rle.registers, 4);
-  assert.equal(rle.feedback, 'counter');
+  const snapshot = Golly.exportToGolly(counter);
+  assert.equal(snapshot.format, 'rle');
+  assert.equal(snapshot.registers, 4);
+  assert.ok(decode(snapshot.text).length > 0);
   const script = Golly.exportToGolly(counter, 'lua');
   assert.equal(script.format, 'lua');
   assert.match(script.text, /local state = \{0,0,0,0\}/);
@@ -67,6 +69,20 @@ test('Golly exports RLE by default and keeps Lua explicit', () => {
   assert.equal(loop.format, 'rle');
   assert.equal(loop.feedback, 'invert');
   assert.match(loop.text, /returns through four turns/);
+});
+
+test('Golly RLE round-trips the original counter, wires, custom gates, and delay state', () => {
+  const source = Presets.load('counter4');
+  source.delayState['root/q0'] = 1;
+  source.delayState['root/q2'] = 1;
+  source.definitions.saved = Core.makeDefinition(Presets.load('not'), '我保存的非门');
+  source.nodes.push({ id: 'saved', type: 'custom', def: 'saved', x: 1800, y: 120, rotation: 90 });
+  const { text } = Golly.exportToGolly(source);
+  const native = Golly.toRLE(Golly.buildPattern(source, { loop: true }));
+  assert.deepEqual(decode(text), decode(native), 'the archive leaves the compiled Life cells intact');
+  assert.deepEqual(Core.validate(JSON.parse(Exchange.readGollySave(text.replaceAll('\n', '\r\n')))), source);
+  assert.throws(() => Exchange.readGollySave(native), /没有逻辑工坊的原电路存档/);
+  assert.throws(() => Exchange.readGollySave(text.split('#C LogicWorkshop-End')[0]), /不完整/);
 });
 
 test('Golly marks each input bit, including zero and unused inputs', () => {
@@ -97,7 +113,7 @@ test('Golly marks each input bit, including zero and unused inputs', () => {
   assert.match(Golly.toLua(oscillator), /-- Input 备用 = 1 at \(-?\d+, -?\d+\) \(unused, eater\)/);
 });
 
-function evolvePattern(cells, generation, sample) {
+function evolvePattern(cells, generation) {
   const xs = cells.map(([x]) => x), ys = cells.map(([, y]) => y);
   const left = Math.min(...xs) - 20, top = Math.min(...ys) - 20;
   const width = Math.max(...xs) - left + 21, height = Math.max(...ys) - top + 21;
@@ -106,9 +122,7 @@ function evolvePattern(cells, generation, sample) {
   const neighbors = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
   let active = [...new Set(cells.map(([x, y]) => index(x, y)))], next = [];
   const touched = [];
-  const read = (x, y) => live[index(x, y)];
   for (const cell of active) live[cell] = 1;
-  sample?.(0, read);
   for (let step = 0; step < generation; step++) {
     for (const cell of active) for (const offset of neighbors) {
       const neighbor = cell + offset;
@@ -128,33 +142,9 @@ function evolvePattern(cells, generation, sample) {
     for (const cell of next) live[cell] = 1;
     touched.length = active.length = 0;
     [active, next] = [next, active];
-    sample?.(step + 1, read);
   }
-  return read;
+  return (x, y) => live[index(x, y)];
 }
-
-test('the four-bit RLE counter counts through rollover and holds its value when disabled', () => {
-  const source = Presets.load('counter4');
-  for (const [start, enabled] of [[0, 1], [5, 1], [15, 0]]) {
-    source.nodes.find(node => node.id === 'enable').value = enabled;
-    for (let bit = 0; bit < 4; bit++) source.delayState['root/q' + bit] = start >> bit & 1;
-    const pattern = Golly.buildPattern(source, { loop: true });
-    assert.equal(pattern.feedback, 'counter');
-    assert.equal(pattern.inputs[0].value, enabled);
-    const rle = Golly.exportToGolly(source).text;
-    assert.match(rle, /Read the four boat bits every 46 generations/);
-    evolvePattern(decode(rle), 32 * pattern.generation, (generation, live) => {
-      if (generation % pattern.generation) return;
-      const count = pattern.outputs.reduce((bits, { x, y }, bit) => {
-        const boat = [[0, 0], [1, 0], [0, 1], [2, 1], [1, 2]];
-        return bits | Number(boat.every(([dx, dy]) => live(x + dx, y + dy))) << bit;
-      }, 0);
-      assert.equal(count, (start + enabled * generation / pattern.generation) % 16);
-    });
-  }
-  source.wires = source.wires.filter(w => w.b.node !== 'q3');
-  assert.equal(Golly.exportToGolly(source).feedback, null);
-});
 
 const probeGlider = [[11, 10], [11, 12], [12, 12], [12, 11], [10, 12]];
 

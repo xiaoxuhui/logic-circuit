@@ -105,37 +105,7 @@ SOFTWARE.
     const inactive = new Set(remove);
     return [kind, [...tiles[kind].filter(cell=>!inactive.has(cell)), ...add]];
   }));
-  // PM 2Ring's p46 boat-bit counter, at generation 1748 (value 0, settled clock phase).
-  // https://conwaylife.com/forums/viewtopic.php?t=45
-  const counterSeed = { x: 0, y: -51, rle: `
-133b2o87b2o87b2o$127bo5b2o81bo5b2o81bo5b2o$126b3o86b3o86b3o$125bo3bo84bo
-3bo84bo3bo$125b2ob2o84b2ob2o84b2ob2o2$126b3o86b3o86b3o$126b3o86b3o86b3o
-6$128b2ob2o84b2ob2o84b2ob2o$128b2ob2o84b2ob2o84b2ob2o$128b2ob2o84b2ob2o
-84b2ob2o$126bob2ob2obo80bob2ob2obo80bob2ob2obo$126b3o3b3o80b3o3b3o80b3o
-3b3o$127bo5bo82bo5bo82bo5bo12$129b3o3b3o80b3o3b3o80b3o3b3o$129bo2bobo2bo
-80bo2bobo2bo80bo2bobo2bo$123bo5bo7bo74bo5bo7bo74bo5bo7bo$121b2o87b2o87b
-2o$122b2o6bo5bo74b2o6bo5bo74b2o6bo5bo$131b2ob2o84b2ob2o84b2ob2o9$110bobo
-86bobo86bobo$110b2o87b2o87b2o$111bo88bo88bo$129b2o5b2o80b2o5b2o80b2o5b2o
-$129b2o5b2o80b2o5b2o80b2o5b2o3$ob2o85bob2o85bob2o85bob2o$2obo85b2obo85b
-2obo85b2obo11$283b3o$283bo$284bo2$87bobo86bobo86bobo$87b2o87b2o87b2o$88b
-o88bo88bo5$206b2o87b2o$206bobo86bobo$206bo88bo2$77bo88bo$75b2o87b2o$76b
-2o87b2o6$306b3o$306bo$307bo2$64bobo86bobo86bobo$64b2o87b2o87b2o$65bo88bo
-88bo5$140b2o87b2o87b2o$140bobo86bobo86bobo$140bo88bo88bo7$88b2o87b2o87b
-2o87b2o$82bo5b2o81bo5b2o81bo5b2o81bo5b2o$81b3o86b3o86b3o86b3o$62b3o15bo
-3bo66b3o15bo3bo66b3o15bo3bo66b3o15bo3bo$62bo17b2ob2o66bo17b2ob2o66bo17b
-2ob2o66bo17b2ob2o$63bo88bo88bo88bo$81b3o86b3o86b3o86b3o$81b3o86b3o86b3o
-86b3o6$83b2ob2o84b2ob2o84b2ob2o84b2ob2o$74b2o7b2ob2o75b2o7b2ob2o75b2o7b
-2ob2o75b2o7b2ob2o$74bobo6b2ob2o75bobo6b2ob2o75bobo6b2ob2o75bobo6b2ob2o$
-74bo6bob2ob2obo73bo6bob2ob2obo73bo6bob2ob2obo73bo6bob2ob2obo$81b3o3b3o
-80b3o3b3o80b3o3b3o80b3o3b3o$82bo5bo82bo5bo82bo5bo82bo5bo13$78b3o3b3o80b
-3o3b3o80b3o3b3o80b3o3b3o$77bo2bo3bo2bo78bo2bo3bo2bo78bo2bo3bo2bo78bo2bo
-3bo2bo$81bobo86bobo86bobo86bobo$81bobo86bobo86bobo86bobo$81bobo86bobo86b
-obo86bobo$77bo2bo3bo2bo78bo2bo3bo2bo78bo2bo3bo2bo78bo2bo3bo2bo$78bo7bo
-80bo7bo80bo7bo80bo7bo4$79bo88bo88bo88bo$77b2ob2o84b2ob2o84b2ob2o84b2ob2o
-2$77b2ob2o84b2ob2o84b2ob2o84b2ob2o$77bo3bo84bo3bo84bo3bo84bo3bo$78b3o86b
-3o86b3o86b3o$85b2o87b2o87b2o87b2o$85b2o87b2o87b2o87b2o!
-  ` };
   const notice="MIT License\n\nCopyright (c) 2023 rlongdragon\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.";
-  if(typeof module==='object'&&module.exports)module.exports={tiles,chargedTiles,counterSeed,notice};
-  else root.LogicLifeTiles={tiles,chargedTiles,counterSeed,notice};
+  if(typeof module==='object'&&module.exports)module.exports={tiles,chargedTiles,notice};
+  else root.LogicLifeTiles={tiles,chargedTiles,notice};
 })(globalThis);

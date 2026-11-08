@@ -87,6 +87,37 @@
 
   const circuitOutputs = source => circuitSignals(source).outputs;
 
+  const gollySaveHeader = '#C LogicWorkshop-Save-v1';
+  const gollySaveEnd = '#C LogicWorkshop-End';
+  function gollySaveComments(source) {
+    const bytes = new TextEncoder().encode(JSON.stringify(source));
+    let binary = '';
+    for (let start = 0; start < bytes.length; start += 16384) {
+      binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+    }
+    const chunks = btoa(binary).match(/.{1,72}/g);
+    return [gollySaveHeader, ...chunks.map(chunk => '#C LW ' + chunk), gollySaveEnd];
+  }
+
+  function readGollySave(text) {
+    const lines = text.split(/\r?\n/);
+    const start = lines.indexOf(gollySaveHeader);
+    if (start < 0) throw Error('这份 RLE 没有逻辑工坊的原电路存档');
+    const end = lines.indexOf(gollySaveEnd, start + 1);
+    if (end <= start + 1) throw Error('RLE 内的电路存档不完整');
+    try {
+      const chunks = lines.slice(start + 1, end).map(line => {
+        const match = line.match(/^#C LW ([A-Za-z0-9+/]{1,72}={0,2})$/);
+        if (!match) throw Error('invalid chunk');
+        return match[1];
+      });
+      const bytes = Uint8Array.from(atob(chunks.join('')), char => char.charCodeAt(0));
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      throw Error('RLE 内的电路存档已损坏');
+    }
+  }
+
   function exportFunctions(source) {
     const outputs = circuitOutputs(source);
     if (outputs.length > Library.MAX_FUNCTIONS) {
@@ -194,5 +225,5 @@
     });
   }
 
-  return { circuitSignals, circuitOutputs, exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
+  return { circuitSignals, circuitOutputs, gollySaveComments, readGollySave, exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
 });

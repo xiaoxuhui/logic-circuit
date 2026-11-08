@@ -598,7 +598,6 @@
           const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
           const saved='已导出「'+filename+'」。';
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
-          else if(data.feedback==='counter')conwayFeedback(saved+'四位计数器可以直接运行。开启计数时，每隔 46 代读一次，蛇形旁有小船代表 1。');
           else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持初始值。');
           else if(data.feedback==='invert')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线会交替输出。');
           else if(data.registers)conwayFeedback(saved+'在 Golly 用 File → Open Pattern 打开。这是单拍图案。连续运行可另行导出桌面 Lua 脚本。');
@@ -684,7 +683,12 @@
   $('export-form').onsubmit=submitExport;
   $('export-clear-form').onsubmit=e=>submitExport(e,true);
   function readSave(text){const next=C.validate(JSON.parse(text));C.deduplicateDefinitionNames(next.definitions);return next;}
-  function importAllText(text){if(new TextEncoder().encode(text).length>2*1024*1024)throw Error('存档过大，请使用 2MB 以内的内容');const next=readSave(text);if(expanded)throw Error('全部收回后即可导入');stopRunning();pendingInputs.clear();pendingWires.clear();unreadableSave=null;storageReadFailed=false;change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('全部内容已导入，可以撤销恢复');}
+  const saveByteLimit=2*1024*1024;
+  function importAllText(text){
+    if(/^\s*(?:#|x\s*=)/i.test(text))text=window.LogicConwayExchange.readGollySave(text);
+    if(new TextEncoder().encode(text).length>saveByteLimit)throw Error('存档过大，请使用 2MB 以内的内容');
+    const next=readSave(text);if(expanded)throw Error('全部收回后即可导入');stopRunning();pendingInputs.clear();pendingWires.clear();unreadableSave=null;storageReadFailed=false;change(()=>{state=next;selected=null;});if(next.camera){camera=next.camera;setCamera();}else fit();toast('全部内容已导入，可以撤销恢复');
+  }
   function describeDefaultSave(){const p=window.LogicPresets.list.find(p=>p.id===$('default-save-select').value);$('default-save-description').textContent=p?.description||'';}
   for(const p of window.LogicPresets.list){const option=document.createElement('option');option.value=p.id;option.textContent=p.name;$('default-save-select').append(option);}
   $('default-saves').onclick=()=>{if(gateEditor||expanded||gesture||placement){toast('请先返回主电路并结束拖动，再载入默认存档');return;}$('default-save-error').textContent='';describeDefaultSave();$('default-save-dialog').showModal();};
@@ -694,7 +698,16 @@
   $('import-file').onclick=()=>$('file-input').click();
   $('import-form').onsubmit=e=>{e.preventDefault();try{importAllText($('import-text').value);$('import-dialog').close();}catch(error){$('import-error').textContent=error instanceof SyntaxError?'存档不是有效 JSON，请粘贴完整文字':error.message;}};
   $('copy-save').onclick=async()=>{const field=$('import-text'),text=unreadableSave??JSON.stringify({...storedSnapshot(),camera:expanded?expanded.camera:camera},null,2);field.value=text;field.focus();field.select();$('import-error').textContent='';try{await navigator.clipboard.writeText(text);toast('完整存档文字已复制，粘贴到“全部导入”即可恢复');}catch{toast('存档文字已选中，请按 Ctrl+C 复制');}};
-  $('file-input').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>2*1024*1024)throw Error('存档过大，请使用 2MB 以内的内容');importAllText(await f.text());$('import-dialog').close();}catch(error){toast(error instanceof SyntaxError?'文件不是有效 JSON':error.message);}e.target.value='';};
+  $('file-input').onchange=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    try{
+      const rle=/\.rle$/i.test(f.name);
+      if(!rle&&f.size>saveByteLimit)throw Error('存档过大，请使用 2MB 以内的内容');
+      // The source archive precedes the pattern. Avoid reading a potentially large grid on import.
+      importAllText(await (rle?f.slice(0,2*saveByteLimit):f).text());$('import-dialog').close();
+    }catch(error){toast(error instanceof SyntaxError?'文件不是有效存档':error.message);}
+    e.target.value='';
+  };
   // Activate touch controls directly on release. Some mobile browsers suppress
   // compatibility clicks after a captured SVG drag. Guard the later native
   // click so that a single tap never invokes a control twice.

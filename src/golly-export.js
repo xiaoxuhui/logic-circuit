@@ -19,7 +19,7 @@
 })(globalThis, function(Exchange, library) {
   'use strict';
 
-  const { tiles: Tiles, chargedTiles, counterSeed, notice } = library;
+  const { tiles: Tiles, chargedTiles, notice } = library;
   const SIZE = 270;
   const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, stream: 8, turnUp: 12, takeLast: 13, loopTurn: 16, not: 20, tap: 21 };
   const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
@@ -29,90 +29,11 @@
   const hasTemporaryWires = source => Object.keys(source.wireOverrides || {}).length > 0
     || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
-  const COUNTER_TICK = 46, COUNTER_SPACING = 89;
-  const snake = [[0, 0], [2, 0], [3, 0], [0, 1], [1, 1], [3, 1]];
-  const boat = [[0, 0], [1, 0], [0, 1], [2, 1], [1, 2]];
-
-  function countPattern(inputs, outputs) {
-    const writes = outputs.filter(output => output.delayId), reads = outputs.filter(output => !output.delayId);
-    if (inputs.length !== 1 || writes.length !== 4 || reads.length !== 4) return null;
-    const byId = new Map(writes.map(write => [write.delayId, write]));
-    const registers = reads.map(read => byId.get(read.expression.delayId));
-    if (registers.some(write => !write) || new Set(registers).size !== 4) return null;
-
-    // Each bit of a mask evaluates one of the 32 combinations of clock and register bits.
-    let carry = 0xffff0000 | 0;
-    const masks = new Map([[inputs[0].expression, carry]]);
-    for (const [bit, { expression }] of reads.entries()) {
-      let mask = 0;
-      for (let state = 0; state < 32; state++) if (state >> bit & 1) mask |= 1 << state;
-      masks.set(expression, mask);
-    }
-    for (const [bit, write] of registers.entries()) {
-      const stack = [write.expression];
-      while (stack.length) {
-        const expr = stack.at(-1);
-        if (masks.has(expr)) { stack.pop(); continue; }
-        if (expr.value !== undefined) { masks.set(expr, expr.value ? -1 : 0); continue; }
-        if (!expr.args) return null;
-        const pending = expr.args.find(arg => !masks.has(arg));
-        if (pending) { stack.push(pending); continue; }
-        const a = masks.get(expr.args[0]), b = masks.get(expr.args[1]);
-        masks.set(expr, expr.op === 'NOT' ? ~a : expr.op === 'AND' ? a & b : a | b);
-      }
-      const current = masks.get(reads[bit].expression);
-      if (masks.get(write.expression) !== (current ^ carry)) return null;
-      carry &= current;
-    }
-
-    const enabled = inputs[0].value;
-    const value = registers.reduce((bits, write, bit) => bits | write.initialValue << bit, 0);
-    const ports = reads.map(({ label }, bit) => ({ label, x: (3 - bit) * COUNTER_SPACING + 5, y: 0 }));
-    const cells = enabled ? seedCounter(value) : ports.flatMap(({ x }, bit) => [
-      ...snake.map(([dx, dy]) => [x + dx - 5, dy]),
-      ...(value >> bit & 1 ? boat.map(([dx, dy]) => [x + dx, dy]) : []),
-    ]);
-    const clock = { label: inputs[0].label, value: enabled, x: 352, y: 115, routed: true };
-    const marker = enabled ? [[0, 0], [1, 0], [0, 1], [1, 1]] : eater;
-    for (const [x, y] of marker) cells.push([clock.x + x, clock.y + y]);
-    return { cells, inputs: [clock], outputs: ports, registers, generation: COUNTER_TICK, loop: true, feedback: 'counter' };
-  }
-
-  function seedCounter(value) {
-    // The seed is already on a stable cycle. Advance to the exported initial count.
-    const width = 512, margin = 64;
-    const offsets = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
-    let x = counterSeed.x, y = counterSeed.y, live = new Set();
-    for (const [, count, op] of counterSeed.rle.matchAll(/(\d*)([ob$])/g)) {
-      const n = Number(count || 1);
-      if (op === 'o') for (let i = 0; i < n; i++) live.add(x++ + margin + y * width);
-      else if (op === 'b') x += n;
-      else { x = counterSeed.x; y += n; }
-    }
-    for (let step = 0; step < value * COUNTER_TICK; step++) {
-      const counts = new Map(), next = new Set();
-      for (const cell of live) for (const offset of offsets) {
-        const neighbor = cell + offset;
-        counts.set(neighbor, (counts.get(neighbor) || 0) + 1);
-      }
-      for (const [cell, count] of counts) if (count === 3 || (count === 2 && live.has(cell))) next.add(cell);
-      live = next;
-    }
-    return [...live].map(cell => {
-      const row = Math.floor(cell / width);
-      return [cell - row * width - margin, row];
-    });
-  }
-
   function buildPattern(source, options = {}) {
     return layoutPattern(Exchange.circuitSignals(source), { ...options, temporaryWires: hasTemporaryWires(source) });
   }
 
   function layoutPattern({ inputs, outputs }, { loop: requestLoop = false, seedRegisters = true, temporaryWires = false } = {}) {
-    if (requestLoop && !temporaryWires) {
-      const counter = countPattern(inputs, outputs);
-      if (counter) return counter;
-    }
     const registerOutputs = outputs.filter(output => output.delayId);
     const update = registerOutputs[0];
     let feedback = null, feedbackExpression;
@@ -294,20 +215,14 @@
       `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
-  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback }) {
+  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback }, source) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
-    const instructions = feedback === 'counter' ? [
-      `#C Four-bit ripple counter. Read the four boat bits every ${COUNTER_TICK} generations, starting at generation 0.`,
-      '#C A boat next to the snake means 1. Glider carries propagate from right to left.',
-      '#C P46 boat-bit counter layout by PM 2Ring: https://conwaylife.com/forums/viewtopic.php?t=45',
-    ] : [
+    return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
+      '#C Logic Workshop - Conway Life glider circuit',
       `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
       ...(loop ? ['#C The next-state stream returns through four turns to the delay input.'] : []),
       ...(feedback === 'hold' ? ['#C Direct feedback preserves the delay line\'s initial bit.'] : []),
-    ];
-    return [`#CXRLE Pos=${minX},${minY} Gen=0`, '#C Logic Workshop - Conway Life glider circuit',
-      ...instructions,
       ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
       '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
       ...notice.split('\n').map(text => `#C ${text}`),
@@ -402,7 +317,7 @@ end
     const signals = Exchange.circuitSignals(source);
     if (format === 'lua') return { text: toLua(source, signals), format };
     const pattern = layoutPattern(signals, { loop: true, temporaryWires: hasTemporaryWires(source) });
-    return { text: toRLE(pattern), format, outputs: pattern.outputs.length, generation: pattern.generation,
+    return { text: toRLE(pattern, source), format, outputs: pattern.outputs.length, generation: pattern.generation,
       feedback: pattern.feedback, registers: pattern.registers.length };
   }
 
