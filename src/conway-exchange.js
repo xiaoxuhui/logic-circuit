@@ -40,7 +40,7 @@
     return precedence < parentPrecedence ? `(${text})` : text;
   }
 
-  function circuitOutputs(source) {
+  function circuitSignals(source) {
     let graph;
     try {
       graph = Domino.flatten(source);
@@ -75,12 +75,17 @@
     }
     const outputs = [...graph.items.filter(p => p.type === 'output'), ...graph.items.filter(p => p.type === 'delay')];
     if (!outputs.length) throw Error('请先添加输出指示灯，再转换电路');
-    return outputs.map(p => ({
+    const inputs = sourceNodes.filter(p => p.type === 'input' && !p.constant && !p.forced)
+      .sort((a, b) => a.sourceY - b.sourceY || a.sourceX - b.sourceX || b.bit - a.bit)
+      .map(p => ({ label: p.label, value: p.value, expression: expressions.get(p) }));
+    return { inputs, outputs: outputs.map(p => ({
       label: p.label + (p.type === 'delay' ? '·下一步' : ''),
       expression: net(p.inputs[0]),
       ...(p.type === 'delay' ? { delayId: p.id, initialValue: p.value } : {}),
-    }));
+    })) };
   }
+
+  const circuitOutputs = source => circuitSignals(source).outputs;
 
   function exportFunctions(source) {
     const outputs = circuitOutputs(source);
@@ -189,5 +194,5 @@
     });
   }
 
-  return { circuitOutputs, exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
+  return { circuitSignals, circuitOutputs, exportFunctions, importFunctions, parseLibrary: Library.parseLibrary, serializeLibrary: Library.serializeLibrary };
 });

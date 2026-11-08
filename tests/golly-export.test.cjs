@@ -49,13 +49,41 @@ test('Golly layout uses current input switches and exports delay read and next-s
   assert.throws(() => Golly.buildPattern({ version: 1, nodes: [], wires: [], definitions: {} }), /输出指示灯/);
 });
 
+test('Golly marks each input bit, including zero and unused inputs', () => {
+  const source = {
+    version: 1, definitions: {},
+    nodes: [
+      { id: 'i', type: 'input', x: 0, y: 0, bits: 2, value: 1, label: 'A' },
+      { id: 'u', type: 'input', x: 0, y: 100, value: 1, label: '备用' },
+      { id: 'o', type: 'output', x: 300, y: 0, bits: 2 },
+    ],
+    wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
+  };
+  const pattern = Golly.buildPattern(source);
+  assert.deepEqual(pattern.inputs.map(({ label, value, routed }) => [label, value, routed]), [
+    ['A · b1', 0, true], ['A · b0', 1, true], ['备用', 1, false],
+  ]);
+  const rle = Golly.toRLE(pattern);
+  const live = new Set(decode(rle).map(cell => cell.join(',')));
+  for (const { label, value, routed, x, y } of pattern.inputs) {
+    assert.ok(rle.includes(`#C Input ${label} = ${value} at (${x}, ${y})`));
+    const size = routed && value ? 2 : 4;
+    let count = 0;
+    for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) count += live.has(`${x + dx},${y + dy}`);
+    assert.equal(count, size === 2 ? 4 : 7);
+  }
+  const oscillator = Presets.load('oscillator');
+  oscillator.nodes.push(source.nodes[1]);
+  assert.match(Golly.toLua(oscillator), /-- Input 备用 = 1 at \(-?\d+, -?\d+\) \(unused, eater\)/);
+});
+
 test('Golly terminates the unused splitter branch and absorbs the stream after the output probe', () => {
   const source = {
     version: 1, definitions: {},
     nodes: [{ id: 'i', type: 'input', x: 0, y: 0, value: 1 }, { id: 'o', type: 'output', x: 200, y: 0 }],
     wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
   };
-  const { cells, outputs: [probe], generation } = Golly.buildPattern(source);
+  const { cells, inputs: [input], outputs: [probe], generation } = Golly.buildPattern(source);
   const xs = cells.map(([x]) => x), ys = cells.map(([, y]) => y);
   const left = Math.min(...xs) - 20, top = Math.min(...ys) - 20;
   const width = Math.max(...xs) - left + 21, height = Math.max(...ys) - top + 21;
@@ -87,5 +115,8 @@ test('Golly terminates the unused splitter branch and absorbs the stream after t
   }
   for (const [dx, dy] of [[11, 10], [11, 12], [12, 12], [12, 11], [10, 12]]) {
     assert.equal(live[index(probe.x + dx, probe.y + dy)], 1, 'the output glider is still readable');
+  }
+  for (const [dx, dy] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+    assert.equal(live[index(input.x + dx, input.y + dy)], 1, 'the input marker remains stable');
   }
 });

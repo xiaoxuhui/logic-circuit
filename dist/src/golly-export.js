@@ -37,7 +37,7 @@
     || Object.values(source.scopedWireOverrides || {}).some(wires => Object.keys(wires).length);
 
   function buildPattern(source, { loop: requestLoop = false, seedRegisters = true } = {}) {
-    const outputs = Exchange.circuitOutputs(source);
+    const { inputs, outputs } = Exchange.circuitSignals(source);
     const registerOutputs = outputs.filter(output => output.delayId);
     const update = registerOutputs[0];
     const canLoop = requestLoop && registerOutputs.length === 1 && update.expression.op === 'NOT'
@@ -90,11 +90,35 @@
         cells.push([x0 + x, y0 + localY]);
       }
     }
+    function placeEater(x0, y0) {
+      for (const [x, y] of eater) cells.push([x0 + x, y0 + y]);
+    }
+    function placeBlock(x, y) {
+      cells.push([x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]);
+    }
     function terminate(column, row) {
       // All terminal lanes carry southeast gliders along the tile diagonal.
       const [x0, y0] = origin(column, row);
-      for (const [x, y] of eater) cells.push([x0 + 100 + x, y0 + 100 + y]);
+      placeEater(x0 + 100, y0 + 100);
     }
+    const unusedSide = Math.ceil(Math.sqrt(inputs.filter(input => !signal.has(input.expression)).length));
+    const [unusedX, unusedY] = origin(3, 0);
+    let unused = 0;
+    const inputPorts = inputs.map(({ label, value, expression }) => {
+      const producer = signal.get(expression);
+      if (!producer) {
+        // Keep unneeded inputs in a compact bank outside the feedback routes.
+        const x = unusedX - 12 * (unused % unusedSide), y = unusedY - 12 * Math.floor(unused / unusedSide);
+        unused++;
+        placeEater(x, y);
+        return { label, value, x, y, routed: false };
+      }
+      const [x0, y0] = origin(producer.column, producer.row);
+      const x = x0 + 100, y = y0 + (value ? 160 : 100);
+      if (value) placeBlock(x, y);
+      else placeEater(x, y);
+      return { label, value, x, y, routed: true };
+    });
     const registerGuns = new Map();
     for (const item of producers) {
       const { expression, column, row: y, index } = item;
@@ -132,13 +156,13 @@
       } else terminate(probe.column - 1, probe.row);
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
-        cells.push([x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]);
+        placeBlock(x, y);
       }
     }
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
     const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,
       gun: registerGuns.get(output.delayId) || null }));
-    return { cells, outputs: probes, registers, generation, loop: !!oscillator };
+    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!oscillator };
   }
 
   function encodeCells(cells) {
@@ -177,13 +201,19 @@
     return { minX, minY, body: [`x = ${maxX - minX + 1}, y = ${maxY - minY + 1}, rule = B3/S23`, ...lines].join('\n') };
   }
 
-  function toRLE({ cells, outputs, generation, loop }) {
+  function inputComments(inputs) {
+    return inputs.map(({ label, value, routed, x, y }) =>
+      `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
+  }
+
+  function toRLE({ cells, inputs = [], outputs, generation, loop }) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, '#C Logic Workshop - Conway Life glider circuit',
       `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
       ...(loop ? ['#C The next-state stream returns through four turns to the delay input.'] : []),
-      ...comments, '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
+      ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
+      '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
       ...notice.split('\n').map(text => `#C ${text}`),
       body, ''].join('\n');
   }
@@ -209,6 +239,7 @@
     return `-- Logic Workshop: run this script in desktop Golly (File > Run Script).
 -- Each round evolves a real B3/S23 circuit and samples every delay input before writing any register.
 -- Press Escape to stop. The original layer is left in place.
+${inputComments(baseline.inputs).map(comment => '-- '+comment).join('\n')}
 ${notice.split('\n').map(line => `-- ${line}`).join('\n')}
 local g = golly()
 if g.numlayers() >= g.maxlayers() then g.exit("Close a layer before starting the circuit.") end
