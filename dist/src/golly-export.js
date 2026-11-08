@@ -16,7 +16,7 @@
         } else {
           const pattern = api.buildPattern(source, { loop: true });
           root.postMessage({ text: api.toRLE(pattern), format, outputs: pattern.outputs.length,
-            generation: pattern.generation, loop: pattern.loop, registers: pattern.registers.length });
+            generation: pattern.generation, feedback: pattern.feedback, registers: pattern.registers.length });
         }
       } catch (error) {
         root.postMessage({ error: error.message });
@@ -26,9 +26,9 @@
 })(globalThis, function(Exchange, library) {
   'use strict';
 
-  const { tiles: Tiles, notice } = library;
+  const { tiles: Tiles, chargedTiles, notice } = library;
   const SIZE = 270;
-  const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, turnUp: 12, takeLast: 13, not: 20, tap: 21 };
+  const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, stream: 8, turnUp: 12, takeLast: 13, loopTurn: 16, not: 20, tap: 21 };
   const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
   // In routing space, data travels left and trunks travel down. The actual
   // glider tracks are diagonal in Life, so both axes rotate by 45 degrees.
@@ -40,10 +40,17 @@
     const { inputs, outputs } = Exchange.circuitSignals(source);
     const registerOutputs = outputs.filter(output => output.delayId);
     const update = registerOutputs[0];
-    const canLoop = requestLoop && registerOutputs.length === 1 && update.expression.op === 'NOT'
-      && update.expression.args[0].delayId === update.delayId && !hasTemporaryWires(source);
-    const roots = canLoop ? [update.expression.args[0], ...outputs.map(output => output.expression)]
-      : outputs.map(output => output.expression);
+    let feedback = null, feedbackExpression;
+    if (requestLoop && registerOutputs.length === 1 && !hasTemporaryWires(source)) {
+      const inverts = update.expression.op === 'NOT';
+      const driver = inverts ? update.expression.args[0] : update.expression;
+      if (driver.delayId === update.delayId) {
+        feedback = inverts ? 'invert' : 'hold';
+        feedbackExpression = driver;
+      }
+    }
+    const roots = outputs.map(output => output.expression);
+    if (feedbackExpression) roots.unshift(feedbackExpression);
     const producers = [];
     const signal = new Map();
     let row = 0;
@@ -73,7 +80,8 @@
       item.expression.args?.forEach((arg, port) => request(arg, item.row + port, item.index));
     }
     const sinkColumn = -3 * producers.length;
-    const oscillator = canLoop ? signal.get(update.expression.args[0]) : null;
+    const feedbackSource = signal.get(feedbackExpression);
+    const chargedFeedback = feedback === 'hold' && update.initialValue;
     const probes = outputs.map(({ label, expression, delayId }, index) => {
       const y = row + index;
       request(expression, y, producers.length);
@@ -82,9 +90,9 @@
     });
 
     const cells = [];
-    function place(column, y, kind, rotation = 0) {
+    function place(column, y, kind, rotation = 0, charged = false) {
       const [x0, y0] = origin(column, y);
-      for (const packed of Tiles[kind]) {
+      for (const packed of charged ? chargedTiles[kind] : Tiles[kind]) {
         let x = packed % SIZE, localY = Math.floor(packed / SIZE);
         for (let turn = 0; turn < rotation; turn++) [x, localY] = [SIZE - 1 - localY, x];
         cells.push([x0 + x, y0 + localY]);
@@ -126,12 +134,16 @@
       if (gate) place(column, y, gate);
       else if (expression.delayId) {
         registerGuns.set(expression.delayId, origin(column, y));
-        if (seedRegisters && item !== oscillator && expression.defaultValue) place(column, y, tile.gun);
+        if (seedRegisters && item !== feedbackSource && expression.defaultValue) place(column, y, tile.gun);
       } else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
       if (expression.args?.length === 2) place(column, y + 1, tile.turnUp);
-      place(column - 1, y, tile.split);
+      const charged = chargedFeedback && item === feedbackSource;
+      place(column - 1, y, tile.split, 0, charged);
       terminate(column - 2, y);
-      for (const tap of item.taps) place(column - 1, tap, tap === item.lastTap ? tile.takeLast : tile.tap);
+      for (const tap of item.taps) place(column - 1, tap, tap === item.lastTap ? tile.takeLast : tile.tap, 0, charged);
+      if (charged) for (let tap = y + 1; tap < item.lastTap; tap++) {
+        if (!item.taps.has(tap)) place(column - 1, tap, tile.stream, 1);
+      }
 
       for (const { y: trackRow, before } of item.requests) {
         for (let other = index + 1; other < before; other++) {
@@ -141,17 +153,18 @@
       }
     }
     for (const probe of probes) {
-      if (oscillator && probe.delayId === update.delayId) {
-        const left = probe.column - 1, right = 2, bottom = probe.row + 2, top = oscillator.row;
-        place(left, probe.row, 16);
-        place(left, bottom, 19);
-        place(right, bottom, 18);
-        place(right, top, 17);
+      if (feedbackSource && probe.delayId === update.delayId) {
+        const left = probe.column - 1, right = 2, bottom = probe.row + 2, top = feedbackSource.row;
+        place(left, probe.row, tile.loopTurn, 0, chargedFeedback);
+        place(left, bottom, tile.loopTurn, 1, chargedFeedback);
+        place(right, bottom, tile.loopTurn, 2, chargedFeedback);
+        place(right, top, tile.loopTurn, 3, chargedFeedback);
+        if (chargedFeedback) for (let x = feedbackSource.column - 2; x > left; x--) place(x, probe.row, tile.stream);
         if (update.initialValue) {
-          for (let y = probe.row + 1; y < bottom; y++) place(left, y, 8, 1);
-          for (let x = left + 1; x < right; x++) place(x, bottom, 8, 2);
-          for (let y = top + 1; y < bottom; y++) place(right, y, 8, 3);
-          for (let x = oscillator.column; x < right; x++) place(x, top, 8);
+          for (let y = probe.row + 1; y < bottom; y++) place(left, y, tile.stream, 1);
+          for (let x = left + 1; x < right; x++) place(x, bottom, tile.stream, 2);
+          for (let y = top + 1; y < bottom; y++) place(right, y, tile.stream, 3);
+          for (let x = feedbackSource.column; x < right; x++) place(x, top, tile.stream);
         }
       } else terminate(probe.column - 1, probe.row);
       // Two stable blocks mark the sampling window without touching the stream.
@@ -162,7 +175,7 @@
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
     const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,
       gun: registerGuns.get(output.delayId) || null }));
-    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!oscillator };
+    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!feedback, feedback };
   }
 
   function encodeCells(cells) {
@@ -206,12 +219,13 @@
       `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
-  function toRLE({ cells, inputs = [], outputs, generation, loop }) {
+  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback }) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, '#C Logic Workshop - Conway Life glider circuit',
       `#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`,
       ...(loop ? ['#C The next-state stream returns through four turns to the delay input.'] : []),
+      ...(feedback === 'hold' ? ['#C Direct feedback preserves the delay line\'s initial bit.'] : []),
       ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
       '#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
       ...notice.split('\n').map(text => `#C ${text}`),

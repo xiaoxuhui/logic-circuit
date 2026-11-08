@@ -597,7 +597,8 @@
           const filename=downloadNamedSave(name,format,data.text,'text/plain;charset=utf-8');
           const saved='已导出「'+filename+'」。';
           if(format==='lua')conwayFeedback(saved+'在桌面版 Golly 选择 File → Run Script，按 Esc 停止。');
-          else if(data.loop)conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，输出会持续交替。');
+          else if(data.feedback==='hold')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线保持初始值。');
+          else if(data.feedback==='invert')conwayFeedback(saved+'用 Golly 打开 RLE 并运行闭合回路，延迟线会交替输出。');
           else if(data.registers)conwayFeedback(saved+'要同步写回所有延迟线，请用「导出循环脚本」。');
           else conwayFeedback(saved+'已生成 '+data.outputs+' 路输出，建议在约 '+data.generation+' 代后查看。');
         }catch(error){conwayFeedback(error.message,true);}

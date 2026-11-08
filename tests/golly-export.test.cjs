@@ -46,6 +46,7 @@ test('Golly layout uses current input switches and exports delay read and next-s
   assert.deepEqual(low.outputs.map(probe => probe.label), ['交替输出', '延迟记忆·下一步']);
   assert.deepEqual(high.outputs, low.outputs);
   assert.ok(high.cells.length > low.cells.length);
+  assert.equal(Golly.buildPattern(source, { loop: true }).feedback, 'invert');
   assert.throws(() => Golly.buildPattern({ version: 1, nodes: [], wires: [], definitions: {} }), /输出指示灯/);
 });
 
@@ -77,13 +78,7 @@ test('Golly marks each input bit, including zero and unused inputs', () => {
   assert.match(Golly.toLua(oscillator), /-- Input 备用 = 1 at \(-?\d+, -?\d+\) \(unused, eater\)/);
 });
 
-test('Golly terminates the unused splitter branch and absorbs the stream after the output probe', () => {
-  const source = {
-    version: 1, definitions: {},
-    nodes: [{ id: 'i', type: 'input', x: 0, y: 0, value: 1 }, { id: 'o', type: 'output', x: 200, y: 0 }],
-    wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
-  };
-  const { cells, inputs: [input], outputs: [probe], generation } = Golly.buildPattern(source);
+function evolvePattern(cells, generation) {
   const xs = cells.map(([x]) => x), ys = cells.map(([, y]) => y);
   const left = Math.min(...xs) - 20, top = Math.min(...ys) - 20;
   const width = Math.max(...xs) - left + 21, height = Math.max(...ys) - top + 21;
@@ -113,10 +108,42 @@ test('Golly terminates the unused splitter branch and absorbs the stream after t
     touched.length = active.length = 0;
     [active, next] = [next, active];
   }
-  for (const [dx, dy] of [[11, 10], [11, 12], [12, 12], [12, 11], [10, 12]]) {
-    assert.equal(live[index(probe.x + dx, probe.y + dy)], 1, 'the output glider is still readable');
+  return (x, y) => live[index(x, y)];
+}
+
+const probeGlider = [[11, 10], [11, 12], [12, 12], [12, 11], [10, 12]];
+
+test('Golly terminates the unused splitter branch and absorbs the stream after the output probe', () => {
+  const source = {
+    version: 1, definitions: {},
+    nodes: [{ id: 'i', type: 'input', x: 0, y: 0, value: 1 }, { id: 'o', type: 'output', x: 200, y: 0 }],
+    wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
+  };
+  const { cells, inputs: [input], outputs: [probe], generation } = Golly.buildPattern(source);
+  const live = evolvePattern(cells, generation);
+  for (const [dx, dy] of probeGlider) {
+    assert.equal(live(probe.x + dx, probe.y + dy), 1, 'the output glider is still readable');
   }
   for (const [dx, dy] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
-    assert.equal(live[index(input.x + dx, input.y + dy)], 1, 'the input marker remains stable');
+    assert.equal(live(input.x + dx, input.y + dy), 1, 'the input marker remains stable');
+  }
+});
+
+test('direct delay feedback holds zero or one and the seeded loop starts with a full stream', () => {
+  const source = {
+    version: 1, definitions: {},
+    nodes: [{ id: 'q', type: 'delay', x: 0, y: 0 }, { id: 'o', type: 'output', x: 200, y: 0 }],
+    wires: ['q', 'o'].map(id => ({ id, a: { node: 'q', dir: 'out', port: 0 }, b: { node: id, dir: 'in', port: 0 } })),
+  };
+  for (const value of [0, 1]) {
+    source.delayState = { 'root/q': value };
+    const pattern = Golly.buildPattern(source, { loop: true });
+    assert.equal(pattern.feedback, 'hold');
+    assert.match(Golly.toRLE(pattern), /Direct feedback preserves/);
+    const probe = pattern.outputs.find(output => output.delayId);
+    for (const generations of [0, 120]) {
+      const live = evolvePattern(pattern.cells, generations);
+      for (const [dx, dy] of probeGlider) assert.equal(live(probe.x + dx, probe.y + dy), value);
+    }
   }
 });
