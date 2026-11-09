@@ -8,6 +8,7 @@
       './vendor/conway/logic-expand.js', './vendor/conway/logic-function-library.js',
       './conway-exchange.js', './vendor/life-tiles.js', './vendor/life-timed-tiles.js', './golly-timed.js');
     const api = factory(root.LogicConwayExchange, root.LogicLifeTiles, root.LogicTimedLife);
+    root.LogicGollyExport = api;
     root.onmessage = ({ data }) => {
       try {
         root.postMessage(api.exportToGolly(data.source, data.format));

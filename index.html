@@ -9,6 +9,7 @@
 <button id="default-saves" class="minecraft-open">◇ 默认存档</button>
 <button id="minecraft-open" class="minecraft-open">▦ 我的世界模式</button>
 <button id="domino-open" class="minecraft-open domino-open">▰ 多米诺骨牌模式</button>
+<button id="life-open" class="minecraft-open">▧ 康威生命游戏模式</button>
 <button id="conway-exchange" class="minecraft-open">◇ 康威生命游戏互通</button>
 <button id="wireworld-open" class="minecraft-open">▤ 电线世界模式</button>
 <p class="intro">一扇与非门，无限种可能。</p>
@@ -89,4 +90,29 @@
 <div class="domino-body"><section class="domino-board wireworld-board"><canvas id="wireworld-canvas" aria-label="电线世界画布，左键绘制，右键拖动，滚轮缩放"></canvas><div id="wireworld-help" class="wireworld-help">左键绘制 · 右键拖动 · 滚轮缩放</div><div class="domino-toolbar"><button id="wireworld-run" class="primary">开始运行</button><button id="wireworld-step" class="subtle">下一代</button><button id="wireworld-reset" class="subtle">重置</button><button id="wireworld-settle" class="subtle" hidden>运行到输出</button><button id="wireworld-next" class="subtle" hidden>下一轮</button><label>每秒 <input id="wireworld-speed" type="number" min="1" max="120" value="12" aria-label="电线世界每秒代数"> 代</label></div></section>
 <aside class="domino-sidebar wireworld-sidebar"><div class="domino-phase"><b id="wireworld-generation">0 代</b><span id="wireworld-counts"></span><p id="wireworld-message" role="status">正在载入…</p></div><div id="wireworld-circuit-io" hidden><h3>输入 <small>只改变电线世界副本</small></h3><div id="wireworld-inputs"></div><h3>输出</h3><div id="wireworld-outputs"></div><p id="wireworld-registers"></p><p class="wireworld-circuit-note">1以周期电子脉冲表示，输出在传播稳定后读取。</p></div><h3>画笔</h3><div id="wireworld-palette" class="wireworld-palette"><button data-state="0" aria-pressed="false"><i style="background:#000000"></i>空白</button><button data-state="1" aria-pressed="true"><i style="background:#f59e0b"></i>导线</button><button data-state="2" aria-pressed="false"><i style="background:#2684ff"></i>电子头</button><button data-state="3" aria-pressed="false"><i style="background:#ffffff"></i>电子尾</button></div><div class="wireworld-actions"><button id="wireworld-undo" class="subtle">撤销</button><button id="wireworld-clear" class="subtle">清空</button><button id="wireworld-restore" class="subtle">恢复上次</button><button id="wireworld-export" class="subtle">导出图案</button><button id="wireworld-import" class="subtle">导入图案</button><button id="wireworld-export-image" class="subtle">导出图片</button></div><input id="wireworld-file" type="file" accept="application/json,.json" hidden><button id="wireworld-edit" class="subtle" aria-pressed="false">开启编辑</button><label class="wireworld-grid"><input id="wireworld-grid" type="checkbox" checked>显示网格</label><details class="wireworld-rules"><summary>演化规则</summary><p>电子头变成电子尾，电子尾变成导线。导线周围八格中恰有1或2个电子头时，下一代变成电子头；否则仍是导线。空白保持空白。</p></details></aside></div></dialog>
 
+<dialog id="life-dialog" class="domino-dialog" aria-labelledby="life-title">
+  <header class="domino-header">
+    <div><small>B3/S23</small><h2 id="life-title">康威生命游戏</h2></div>
+    <nav><button id="life-fit" class="subtle">总览</button><button id="life-close" class="primary">返回电路</button></nav>
+  </header>
+  <div class="domino-body">
+    <section class="domino-board wireworld-board">
+      <canvas id="life-canvas" aria-label="生命游戏图案，拖动平移，滚轮缩放"></canvas>
+      <div class="wireworld-help">拖动平移 · 滚轮缩放</div>
+      <div class="domino-toolbar">
+        <button id="life-run" class="primary" disabled>运行</button>
+        <button id="life-step" class="subtle" disabled>下一代</button>
+        <button id="life-next" class="subtle" disabled>运行到输出</button>
+        <button id="life-reset" class="subtle" disabled>重置</button>
+        <label>运行步幅 <select id="life-speed"><option value="1">1 代</option><option value="60" selected>60 代</option><option value="600">600 代</option><option value="sample">按拍</option></select></label>
+      </div>
+    </section>
+    <aside class="domino-sidebar">
+      <div class="domino-phase"><b id="life-generation">第 0 代</b><span id="life-timing"></span><p id="life-status" role="status"></p></div>
+      <h3>输入 <small>点击 0 或 1 切换</small></h3><div id="life-inputs"></div>
+      <h3>输出 <small id="life-read-at"></small></h3><div id="life-outputs"></div>
+    </aside>
+  </div>
+</dialog>
+<script defer src="./src/conway-life-view.js"></script>
 </body></html>

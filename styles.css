@@ -75,3 +75,6 @@ dialog.minecraft-mode{position:fixed;inset:0;width:100vw;height:100dvh;max-width
 .wireworld-dialog .wireworld-grid{justify-content:flex-start;white-space:nowrap;gap:8px}.wireworld-dialog .wireworld-grid input{width:16px;height:16px;flex:0 0 16px;margin:0;padding:0}.wireworld-circuit-note,#wireworld-registers{font-size:11px;color:#9cb09f;line-height:1.6}
 
 #default-save-select{width:100%;padding:12px;border:1px solid #4c626e;background:#101c24;border-radius:6px;color:#e3efed}
+.life-port{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.life-port .subtle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.life-port .signal-switch{flex:none;min-width:42px;padding:7px 10px;text-align:center}
