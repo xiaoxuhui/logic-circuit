@@ -63,8 +63,8 @@ test('Golly exports actual RLE by default even for a counter and keeps Lua expli
   assert.equal([...snapshot.text.matchAll(/^#C NAND root\//gm)].length, 22);
   assert.equal([...snapshot.text.matchAll(/^#C Feedback /gm)].length, 4);
   const counterLayout = Golly.buildPattern(counter, { loop: true });
-  assert.equal(counterLayout.portWords.filter(port => port.word === 'INPUT').length, 5);
-  assert.equal(counterLayout.portWords.filter(port => port.word === 'OUTPUT').length, 8);
+  assert.equal(counterLayout.portWords.filter(port => port.word === 'INPUT').length, 1);
+  assert.equal(counterLayout.portWords.filter(port => port.word === 'OUTPUT').length, 4);
   assert.match(snapshot.text, new RegExp('every ' + snapshot.period + ' generations'));
   assert.ok(decode(snapshot.text).length > 0);
   const script = Golly.exportToGolly(counter, 'lua');
@@ -110,12 +110,13 @@ test('Golly marks each input bit, including zero and unused inputs', () => {
   ]);
   const rle = Golly.toRLE(pattern);
   const live = new Set(decode(rle).map(cell => cell.join(',')));
-  for (const { label, value, routed, x, y } of pattern.inputs) {
+  assert.deepEqual(pattern.portWords.map(port => port.word), ['INPUT', 'INPUT', 'INPUT', 'OUTPUT', 'OUTPUT']);
+  for (const { label, value, routed, x, y, switchRLE } of pattern.inputs) {
     assert.ok(rle.includes(`#C Input ${label} = ${value} at (${x}, ${y})`));
-    const size = routed && value ? 2 : 4;
     let count = 0;
-    for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) count += live.has(`${x + dx},${y + dy}`);
-    assert.equal(count, size === 2 ? 4 : 7);
+    for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) count += live.has(`${x + dx},${y + dy}`);
+    assert.equal(count, routed && value ? 0 : 7);
+    assert.equal(!!switchRLE, routed);
   }
   const oscillator = Presets.load('oscillator');
   oscillator.nodes.push(source.nodes[1]);
@@ -180,9 +181,15 @@ test('Golly terminates the unused splitter branch and absorbs the stream after t
   for (const [dx, dy] of probeGlider) {
     assert.equal(live(probe.x + dx, probe.y + dy), 1, 'the output glider is still readable');
   }
-  for (const [dx, dy] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
-    assert.equal(live(input.x + dx, input.y + dy), 1, 'the input marker remains stable');
-  }
+  assert.equal(live(input.x - 12, input.y + 11), 1, 'the switch guide remains stable');
+  const eater = decode(`#CXRLE Pos=${input.x},${input.y} Gen=0\n${input.switchRLE}`);
+  const closed = evolvePattern(cells.concat(eater), generation);
+  assert.ok(probeGlider.every(([dx, dy]) => !closed(probe.x + dx, probe.y + dy)), 'adding the eater blocks the stream');
+  source.nodes[0].value = 0;
+  const offCells = decode(Golly.toRLE(Golly.buildPattern(source)));
+  const eaterCells = new Set(eater.map(cell => cell.join(',')));
+  const opened = evolvePattern(offCells.filter(cell => !eaterCells.has(cell.join(','))), generation);
+  assert.ok(probeGlider.every(([dx, dy]) => opened(probe.x + dx, probe.y + dy)), 'removing the eater releases the stream');
 });
 
 test('direct delay feedback holds zero or one and the seeded loop starts with a full stream', () => {
@@ -194,6 +201,7 @@ test('direct delay feedback holds zero or one and the seeded loop starts with a 
   for (const value of [0, 1]) {
     source.delayState = { 'root/q': value };
     const pattern = Golly.buildPattern(source, { loop: true });
+    assert.deepEqual(pattern.portWords.map(port => port.word), ['OUTPUT']);
     assert.equal(pattern.feedback, 'hold');
     const rle = Golly.toRLE(pattern);
     assert.match(rle, /Direct feedback preserves/);
@@ -220,4 +228,8 @@ test('four self-fed delay bits use distinct return lanes and preserve their init
   const feedback = pattern.outputs.filter(probe => probe.delayId);
   assert.deepEqual(feedback.map(({ x, y }) => Number(probeGlider.every(([dx, dy]) => live(x + dx, y + dy)))), [1, 0, 1, 0]);
   assert.deepEqual(JSON.parse(Exchange.readGollySave(Golly.exportToGolly(source).text)), source);
+  source.nodes.pop();
+  source.wires.pop();
+  const feedbackOnly = Golly.buildPattern(source, { loop: true });
+  assert.deepEqual(feedbackOnly.portWords, [], 'internal feedback alone has no external port labels');
 });

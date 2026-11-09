@@ -23,6 +23,7 @@
   const SIZE = 270;
   const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, stream: 8, turnUp: 12, takeLast: 13, loopTurn: 16, not: 20, tap: 21 };
   const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
+  const eaterRLE = '2o$obo$2bo$2b2o!';
   const arrow = [[0, 0], [12, 12], [24, 24], [36, 36], [48, 48], [36, 48], [48, 36]];
   const letters = {
     I: ['111', '010', '010', '010', '111'],
@@ -75,12 +76,12 @@
     const feedbacks = close ? simpleFeedback(updates) : [];
     const pattern = close && updates.length && !feedbacks.length
       ? Timed.build(Exchange.circuitSignals(source, { preserveNands: true }))
-      : layoutPattern(signals, { ...options, feedbacks });
+      : layoutPattern(signals, { ...options, feedbacks, rleInputs: options.seedRegisters !== false });
     if (options.seedRegisters !== false) addPortWords(pattern);
     return pattern;
   }
 
-  function layoutPattern({ inputs, outputs }, { feedbacks = [], seedRegisters = true } = {}) {
+  function layoutPattern({ inputs, outputs }, { feedbacks = [], seedRegisters = true, rleInputs = false } = {}) {
     const registerOutputs = outputs.filter(output => output.delayId);
     const feedback = feedbacks.length ? (feedbacks[0].invert ? 'invert' : 'hold') : null;
     const roots = [...feedbacks.map(item => item.driver), ...outputs.map(output => output.expression)];
@@ -161,19 +162,27 @@
     }
     const unusedSide = Math.ceil(Math.sqrt(inputs.filter(input => !signal.has(input.expression)).length));
     const [unusedX, unusedY] = origin(Math.max(3, returnById.size + 2), 0);
+    const externalInputs = new Set(inputs.map(input => input.expression));
     let unused = 0;
     const inputPorts = inputs.map(({ label, value, expression }) => {
       const producer = signal.get(expression);
       if (!producer) {
         // Keep unneeded inputs in a compact bank outside the feedback routes.
-        const x = unusedX - 12 * (unused % unusedSide), y = unusedY - 12 * Math.floor(unused / unusedSide);
-        if (unused === 0) markPort('INPUT', unusedX - SIZE, unusedY - SIZE);
+        const x = unusedX - 155 * (unused % unusedSide), y = unusedY - 55 * Math.floor(unused / unusedSide);
+        portWords.push({ word: 'INPUT', x: x - 119, y: y - 8 });
         unused++;
         placeEater(x, y);
         return { label, value, x, y, routed: false };
       }
       const [x0, y0] = origin(producer.column, producer.row);
-      markPort('INPUT', x0, y0);
+      if (rleInputs) {
+        const x = x0 + 100, y = y0 + 100;
+        portWords.push({ word: 'INPUT', x: x + 24, y: y - 39 });
+        placeBlock(x - 12, y + 11);
+        placeBlock(x + 11, y - 12);
+        if (!value) placeEater(x, y);
+        return { label, value, x, y, routed: true, switchRLE: eaterRLE };
+      }
       const x = x0 + 100, y = y0 + (value ? 160 : 100);
       if (value) placeBlock(x, y);
       else placeEater(x, y);
@@ -188,6 +197,8 @@
       else if (expression.delayId) {
         registerGuns.set(expression.delayId, origin(column, y));
         if (seedRegisters && !route && expression.defaultValue) place(column, y, tile.gun);
+      } else if (rleInputs && externalInputs.has(expression)) {
+        place(column + 1, y, tile.gun);
       } else if (expression.value ?? expression.defaultValue) place(column, y, tile.gun);
       if (expression.args?.length === 2) place(column, y + 1, tile.turnUp);
       const charged = route?.charged;
@@ -226,12 +237,11 @@
         for (let x = source.column + 1; x < right; x++) markReturn(x, top, 0, initialValue);
         if (initialValue) seedStream(source.column, top);
         const [x0, y0] = origin(source.column, top);
-        markPort('INPUT', x0, y0);
         const input = { x: x0 + 96, y: y0 + 168 };
         for (const [x, y] of [[0, 0], [8, 0], [0, 8], [8, 8]]) placeBlock(input.x + x, input.y + y);
         returnPorts.push({ label: probe.label, output: { x: probe.x, y: probe.y }, input });
       } else terminate(probe.column - 1, probe.row);
-      markPort('OUTPUT', ...origin(probe.column, probe.row));
+      if (!probe.delayId) markPort('OUTPUT', ...origin(probe.column, probe.row));
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
         placeBlock(x, y);
@@ -294,8 +304,9 @@
   }
 
   function inputComments(inputs) {
-    return inputs.map(({ label, value, routed, x, y }) =>
-      `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${!routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
+    return inputs.map(({ label, value, routed, x, y, switchRLE }) =>
+      `Input ${label.replace(/[\r\n]/g, ' ')} = ${value} at (${x}, ${y}) (${switchRLE ? `switch eater: ${switchRLE}`
+        : !routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
   function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, period, returnPorts = [], gates = [] }, source) {
@@ -304,6 +315,8 @@
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
       '#C Logic Workshop - Conway Life circuit',
       '#C The words INPUT and OUTPUT are made of still-life blocks next to the ports.',
+      ...(inputs.some(input => input.switchRLE) ? ['#C A switch eater is 0. Remove only the seven cells between its two guide blocks for 1.',
+        '#C To set 0, restore the eater at the input coordinates listed below when the switch area is clear.'] : []),
       ...(period ? [`#C Sample the output probes at generation 0 and every ${period} generations thereafter.`,
         '#C An eastbound lightweight spaceship at the marked output is 1.',
         '#C Timed Life gate patterns after Myreen and Carneiro, CC BY 4.0. https://doi.org/10.4230/LIPIcs.ITP.2025.25']

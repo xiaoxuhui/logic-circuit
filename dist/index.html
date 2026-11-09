@@ -52,7 +52,7 @@
 <dialog id="conway-dialog" aria-labelledby="conway-heading">
   <span class="eyebrow">CONWAY LIFE</span>
   <h2 id="conway-heading">康威生命游戏互通</h2>
-  <p>把当前电路转换为 B3/S23 图案。在 Golly 的 File → Open 打开 RLE 文件，观察输出标记处有没有信号经过。输入也有标记，值为 0 或未参与输出的输入会放上吞噬器。</p>
+  <p>把当前电路转换为 B3/S23 图案。在 Golly 的 File → Open 打开 RLE 文件。暂停后，在 INPUT 旁找到两块定位方块之间的吞噬器。移除它就输入 1，按 RLE 注释中的形状放回就输入 0。放回前请等开关位置空出来。</p>
   <p>导出的 RLE 附带原电路存档，可用「全部导入」恢复。固定箭头指向四方块标记的回接输入。同步回路的每拍代数会写在导出说明和 RLE 文件里。有临时导线输入时只导出当前一拍。</p>
   <label for="conway-export-name">导出文件名（可选）</label><input id="conway-export-name" maxlength="80" autocomplete="off" placeholder="留空使用默认名称，重名时自动加编号">
   <div class="dialog-actions">

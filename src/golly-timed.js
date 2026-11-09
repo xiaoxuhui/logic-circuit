@@ -10,6 +10,7 @@
   const HALF_TICK = 30, WIRE = 10, TURN = 11, JOG = 24, SLOW_EXTRA = 8;
   const turns = ['right', 'medium', 'slow'];
   const gateDelays = { AND: [10, 11], OR: [14, 11], NOT: [14] };
+  const eaterRLE = '2b2o$2bo$obo$2o!';
   const arrow = [[0, 0], [10, 0], [20, 0], [30, 0], [20, -10], [20, 10]];
 
   function build({ inputs, outputs, registers: registerExpressions }) {
@@ -37,6 +38,7 @@
     registerExpressions.forEach(visit);
     outputs.forEach(output => visit(output.expression));
     const sources = new Map(registerExpressions.map(expression => [expression.delayId, signal.get(expression)]));
+    const externalInputs = new Set(inputs.map(input => input.expression));
 
     function connect(from, to, targetRow, port) {
       const edge = { from, to, row: targetRow, port, padding: 0 };
@@ -97,7 +99,12 @@
       const { column: x, row: y, value, expression, args, edges } = producer;
       if (expression.op) put(x, y, expression.op.toLowerCase(), 0, args.reduce((mask, arg, bit) => mask | Number(arg.value) << bit, 0));
       else if (expression.delayId) wire(x, y, 'e', value);
-      else if (value) put(x, y, 'not', 0, 0);
+      else if (externalInputs.has(expression)) {
+        // The preceding tile always emits. The port tile either passes the stream or eats it.
+        put(x - 1, y, 'not', 0, 0);
+        if (value) wire(x, y, 'e', true);
+        else put(x, y, 'end', 0, 1);
+      } else if (value) put(x, y, 'not', 0, 0);
       else put(x, y, 'end', 0, 0);
       if (expression.gateId) gates.push({ id: expression.gateId, label: expression.label, x: x * SIZE, y: y * SIZE });
       if (!edges.length) { put(x + 1, y, 'end', 0, value); continue; }
@@ -151,28 +158,30 @@
       put(left, top, 'right', 3, value);
       for (let x = left + 1; x < source.column; x++) returnWire(x, top, 'e', 0, value);
       const input = { x: source.column * SIZE + 28, y: top * SIZE + 114 };
-      markPort('INPUT', source.column, top);
       for (const [x, y] of [[0,0],[8,0],[0,8],[8,8]]) block(input.x + x, input.y + y);
       returnPorts.push({ label: sink.label, output: { x: sinkColumn * SIZE, y: sink.row * SIZE + 71 }, input });
     }
 
     const probes = sinks.map(({ label, row, delayId }) => {
       const x = sinkColumn * SIZE, y = row * SIZE + 71;
-      markPort('OUTPUT', sinkColumn, row);
+      if (!delayId) markPort('OUTPUT', sinkColumn, row);
       block(x - 14, y - 24);
       block(x - 14, y + 24);
       return { label, x, y, ...(delayId ? { delayId } : {}) };
     });
-    if (inputs.some(input => !signal.has(input.expression))) markPort('INPUT', 0, -2 - Math.ceil(inputs.length / 8));
     const inputPorts = inputs.map(({ label, value, expression }, index) => {
       const producer = signal.get(expression);
       const column = producer ? producer.column : index % 8;
       const row = producer ? producer.row : -1 - Math.floor(index / 8);
-      if (!producer) put(column, row, 'end', 0, 0);
-      else markPort('INPUT', column, row);
-      const x = column * SIZE + 8, y = row * SIZE + 125;
-      block(x, y);
-      return { label, value, x, y, routed: !!producer };
+      const x = column * SIZE + 10, y = row * SIZE + 68;
+      portWords.push({ word: 'INPUT', x: x + 10, y: y + 42 });
+      if (!producer) {
+        put(column, row, 'end', 0, 0);
+        return { label, value, x, y, routed: false };
+      }
+      block(x - 8, y + 13);
+      block(x + 11, y - 12);
+      return { label, value, x, y, routed: true, switchRLE: eaterRLE };
     });
     const registers = updates.map(({ delayId: id, initialValue }) => ({ id, initialValue, gun: null }));
     return { cells, inputs: inputPorts, outputs: probes, registers, generation: 0, period,
