@@ -62,6 +62,9 @@ test('Golly exports actual RLE by default even for a counter and keeps Lua expli
   assert.ok(snapshot.period > 0);
   assert.equal([...snapshot.text.matchAll(/^#C NAND root\//gm)].length, 22);
   assert.equal([...snapshot.text.matchAll(/^#C Feedback /gm)].length, 4);
+  const counterLayout = Golly.buildPattern(counter, { loop: true });
+  assert.equal(counterLayout.portWords.filter(port => port.word === 'INPUT').length, 5);
+  assert.equal(counterLayout.portWords.filter(port => port.word === 'OUTPUT').length, 8);
   assert.match(snapshot.text, new RegExp('every ' + snapshot.period + ' generations'));
   assert.ok(decode(snapshot.text).length > 0);
   const script = Golly.exportToGolly(counter, 'lua');
@@ -160,8 +163,20 @@ test('Golly terminates the unused splitter branch and absorbs the stream after t
     nodes: [{ id: 'i', type: 'input', x: 0, y: 0, value: 1 }, { id: 'o', type: 'output', x: 200, y: 0 }],
     wires: [{ id: 'w', a: { node: 'i', dir: 'out', port: 0 }, b: { node: 'o', dir: 'in', port: 0 } }],
   };
-  const { cells, inputs: [input], outputs: [probe], generation } = Golly.buildPattern(source);
+  const pattern = Golly.buildPattern(source);
+  const { inputs: [input], outputs: [probe], generation, portWords } = pattern;
+  const cells = decode(Golly.toRLE(pattern));
   const live = evolvePattern(cells, generation);
+  assert.deepEqual(portWords.map(port => port.word), ['INPUT', 'OUTPUT']);
+  for (const { word, x, y } of portWords) {
+    const width = word === 'INPUT' ? 105 : 120;
+    const initial = new Set(cells.filter(([cx, cy]) => cx >= x && cx < x + width && cy >= y && cy < y + 22)
+      .map(cell => cell.join(',')));
+    assert.ok(initial.size > 150);
+    for (let dy = 0; dy < 22; dy++) for (let dx = 0; dx < width; dx++) {
+      assert.equal(live(x + dx, y + dy), Number(initial.has(`${x + dx},${y + dy}`)), `${word} stays still`);
+    }
+  }
   for (const [dx, dy] of probeGlider) {
     assert.equal(live(probe.x + dx, probe.y + dy), 1, 'the output glider is still readable');
   }

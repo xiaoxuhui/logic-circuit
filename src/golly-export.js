@@ -24,6 +24,32 @@
   const tile = { and: 1, or: 2, gun: 4, split: 6, crossing: 7, stream: 8, turnUp: 12, takeLast: 13, loopTurn: 16, not: 20, tap: 21 };
   const eater = [[0, 0], [1, 0], [0, 1], [2, 1], [2, 2], [2, 3], [3, 3]];
   const arrow = [[0, 0], [12, 12], [24, 24], [36, 36], [48, 48], [36, 48], [48, 36]];
+  const letters = {
+    I: ['111', '010', '010', '010', '111'],
+    N: ['1001', '1101', '1011', '1001', '1001'],
+    P: ['110', '101', '110', '100', '100'],
+    U: ['101', '101', '101', '101', '111'],
+    T: ['111', '010', '010', '010', '010'],
+    O: ['111', '101', '101', '101', '111'],
+  };
+  function addPortWords({ cells, portWords }) {
+    const drawn = new Set();
+    for (const { word, x, y } of portWords) {
+      const key = `${word},${x},${y}`;
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      let left = x;
+      for (const letter of word) {
+        const rows = letters[letter];
+        rows.forEach((row, dy) => [...row].forEach((pixel, dx) => {
+          if (pixel !== '1') return;
+          const bx = left + 5 * dx, by = y + 5 * dy;
+          cells.push([bx, by], [bx + 1, by], [bx, by + 1], [bx + 1, by + 1]);
+        }));
+        left += 5 * (rows[0].length + 1);
+      }
+    }
+  }
   // In routing space, data travels left and trunks travel down. The actual
   // glider tracks are diagonal in Life, so both axes rotate by 45 degrees.
   const origin = (column, row) => [-SIZE * (column + row), SIZE * (row - column)];
@@ -47,10 +73,11 @@
     const updates = signals.outputs.filter(output => output.delayId);
     const close = options.loop && !hasTemporaryWires(source);
     const feedbacks = close ? simpleFeedback(updates) : [];
-    if (close && updates.length && !feedbacks.length) {
-      return Timed.build(Exchange.circuitSignals(source, { preserveNands: true }));
-    }
-    return layoutPattern(signals, { ...options, feedbacks });
+    const pattern = close && updates.length && !feedbacks.length
+      ? Timed.build(Exchange.circuitSignals(source, { preserveNands: true }))
+      : layoutPattern(signals, { ...options, feedbacks });
+    if (options.seedRegisters !== false) addPortWords(pattern);
+    return pattern;
   }
 
   function layoutPattern({ inputs, outputs }, { feedbacks = [], seedRegisters = true } = {}) {
@@ -101,7 +128,9 @@
     }));
     const chargedRows = new Set([...returnById.values()].filter(route => route.charged).map(route => route.probe.row));
 
-    const cells = [];
+    const cells = [], portWords = [];
+    // Diagonal tiles occupy alternating squares. Keep text in the center of an unused square.
+    function markPort(word, x, y) { portWords.push({ word, x: x + SIZE + 60, y: y + 120 }); }
     const crossings = new Map(), streams = [], returnArrows = [], returnPorts = [];
     const routeKey = (column, y) => `${column},${y}`;
     function cross(column, y, charged = false) {
@@ -138,11 +167,13 @@
       if (!producer) {
         // Keep unneeded inputs in a compact bank outside the feedback routes.
         const x = unusedX - 12 * (unused % unusedSide), y = unusedY - 12 * Math.floor(unused / unusedSide);
+        if (unused === 0) markPort('INPUT', unusedX - SIZE, unusedY - SIZE);
         unused++;
         placeEater(x, y);
         return { label, value, x, y, routed: false };
       }
       const [x0, y0] = origin(producer.column, producer.row);
+      markPort('INPUT', x0, y0);
       const x = x0 + 100, y = y0 + (value ? 160 : 100);
       if (value) placeBlock(x, y);
       else placeEater(x, y);
@@ -195,10 +226,12 @@
         for (let x = source.column + 1; x < right; x++) markReturn(x, top, 0, initialValue);
         if (initialValue) seedStream(source.column, top);
         const [x0, y0] = origin(source.column, top);
+        markPort('INPUT', x0, y0);
         const input = { x: x0 + 96, y: y0 + 168 };
         for (const [x, y] of [[0, 0], [8, 0], [0, 8], [8, 8]]) placeBlock(input.x + x, input.y + y);
         returnPorts.push({ label: probe.label, output: { x: probe.x, y: probe.y }, input });
       } else terminate(probe.column - 1, probe.row);
+      markPort('OUTPUT', ...origin(probe.column, probe.row));
       // Two stable blocks mark the sampling window without touching the stream.
       for (const [x, y] of [[probe.x - 28, probe.y + 10], [probe.x + 18, probe.y - 18]]) {
         placeBlock(x, y);
@@ -221,7 +254,7 @@
     const generation = 1080 * (-sinkColumn + row + outputs.length + producers.length + 4);
     const registers = registerOutputs.map(output => ({ id: output.delayId, initialValue: output.initialValue,
       gun: registerGuns.get(output.delayId) || null }));
-    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!feedback, feedback, returnPorts };
+    return { cells, inputs: inputPorts, outputs: probes, registers, generation, loop: !!feedback, feedback, returnPorts, portWords };
   }
 
   function encodeCells(cells) {
@@ -270,6 +303,7 @@
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
       '#C Logic Workshop - Conway Life circuit',
+      '#C The words INPUT and OUTPUT are made of still-life blocks next to the ports.',
       ...(period ? [`#C Sample the output probes at generation 0 and every ${period} generations thereafter.`,
         '#C An eastbound lightweight spaceship at the marked output is 1.',
         '#C Timed Life gate patterns after Myreen and Carneiro, CC BY 4.0. https://doi.org/10.4230/LIPIcs.ITP.2025.25']

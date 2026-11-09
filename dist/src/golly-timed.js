@@ -72,7 +72,11 @@
       sink.shift = sink.edge.from.shift + relativeDelay(sink.edge);
     }
 
-    const cells = [], returnPorts = [], gates = [];
+    const cells = [], returnPorts = [], gates = [], portWords = [];
+    // Port lanes are on even rows. The tile directly below each port is clear of traffic.
+    function markPort(word, column, row) {
+      portWords.push({ word, x: column * SIZE + 12, y: (row + 1) * SIZE + 28 });
+    }
     function paint(x, y, tile) {
       for (const packed of tileCells(tile)) cells.push([x * SIZE + packed % SIZE, y * SIZE + Math.floor(packed / SIZE)]);
     }
@@ -147,28 +151,32 @@
       put(left, top, 'right', 3, value);
       for (let x = left + 1; x < source.column; x++) returnWire(x, top, 'e', 0, value);
       const input = { x: source.column * SIZE + 28, y: top * SIZE + 114 };
+      markPort('INPUT', source.column, top);
       for (const [x, y] of [[0,0],[8,0],[0,8],[8,8]]) block(input.x + x, input.y + y);
       returnPorts.push({ label: sink.label, output: { x: sinkColumn * SIZE, y: sink.row * SIZE + 71 }, input });
     }
 
     const probes = sinks.map(({ label, row, delayId }) => {
       const x = sinkColumn * SIZE, y = row * SIZE + 71;
+      markPort('OUTPUT', sinkColumn, row);
       block(x - 14, y - 24);
       block(x - 14, y + 24);
       return { label, x, y, ...(delayId ? { delayId } : {}) };
     });
+    if (inputs.some(input => !signal.has(input.expression))) markPort('INPUT', 0, -2 - Math.ceil(inputs.length / 8));
     const inputPorts = inputs.map(({ label, value, expression }, index) => {
       const producer = signal.get(expression);
       const column = producer ? producer.column : index % 8;
       const row = producer ? producer.row : -1 - Math.floor(index / 8);
       if (!producer) put(column, row, 'end', 0, 0);
+      else markPort('INPUT', column, row);
       const x = column * SIZE + 8, y = row * SIZE + 125;
       block(x, y);
       return { label, value, x, y, routed: !!producer };
     });
     const registers = updates.map(({ delayId: id, initialValue }) => ({ id, initialValue, gun: null }));
     return { cells, inputs: inputPorts, outputs: probes, registers, generation: 0, period,
-      loop: true, feedback: 'timed', returnPorts, gates };
+      loop: true, feedback: 'timed', returnPorts, gates, portWords };
   }
 
   return { build };
