@@ -10,6 +10,7 @@
   let state=initial(),camera={x:0,y:0,scale:1},selected=null,mode='wire',space=false,gesture=null,sim,saveTimer,toastTimer,unreadableSave=null;
   let past=[],future=[],placement=null,busEdit=null,expanded=null,gateEditor=null,pastePreview=null,lastPointer=null,storageReadFailed=false,recoveryPending=false,wireInspectorTarget=null,delayInspectorTarget=null;
   let delayPageSize=0;
+  let packageWireId=null,pickingPackageWire=false;
   const pendingInputs=new Map(),pendingWires=new Map();
   const inputValue=n=>pendingInputs.get(n.id)?.node===n?pendingInputs.get(n.id).value:n.value||0;
   function pendingInputCount(){return [...pendingInputs.values()].filter(p=>state.nodes.includes(p.node)).length+[...pendingWires.values()].filter(p=>p.owner===state).length;}
@@ -432,8 +433,10 @@
     if(pastePreview){if(e.button===0){placePaste(e);svg.focus({preventScroll:true});}e.preventDefault();return;}
     if(![0,1,2].includes(e.button)||gesture||placement)return;if(expanded&&e.button===0&&(e.target.closest('[data-expanded-net],[data-bit-toggle]')||expanded.view.compact&&window.LogicExpanded.hitTest(expanded.view,worldPoint(e),6/camera.scale)))return;
     const p=worldPoint(e),nodeEl=e.target.closest('[data-node]'),port=e.target.closest('[data-port]'),wire=e.target.closest('[data-wire]'),toggleEl=e.target.closest('[data-toggle]');
+    if(pickingPackageWire&&e.button===0){e.preventDefault();return;}
     if(e.button===0&&!expanded)delayInspectorTarget=null;
-    if(e.button===0&&!space&&expanded?.instanceView&&e.target.closest('[data-expanded-type=custom][data-expanded-node]')){gesture={type:'instance-node',id:e.target.closest('[data-expanded-node]').dataset.expandedNode,start:localPoint(e),camera:{...camera},moved:false};}
+    if(pickingPackageWire){gesture={type:'pan',start:localPoint(e),camera:{...camera}};svg.classList.add('dragging');}
+    else if(e.button===0&&!space&&expanded?.instanceView&&e.target.closest('[data-expanded-type=custom][data-expanded-node]')){gesture={type:'instance-node',id:e.target.closest('[data-expanded-node]').dataset.expandedNode,start:localPoint(e),camera:{...camera},moved:false};}
     else if(e.button===2&&expanded?.instanceView&&e.target.closest('[data-expanded-node]')){gesture={type:'delay-inspect',id:e.target.closest('[data-expanded-node]').dataset.expandedNode,start:localPoint(e),camera:{...camera},moved:false};}
     else if(e.button===0&&e.shiftKey&&!expanded){gesture={type:'marquee',start:p,current:p,beforeSelection:C.clone(selected)};updateMarquee(p);}
     else if(e.button===2&&nodeEl){gesture={type:'delay-inspect',id:nodeEl.dataset.node,start:localPoint(e),camera:{...camera},moved:false};}
@@ -451,7 +454,7 @@
     // A mouse chord reports intermediate button presses/releases as pointermove.
     if(gesture&&e.pointerType==='mouse'&&e.pointerId===gesture.pointerId){
       const q=localPoint(e);
-      if(gesture.type==='pan'&&e.buttons===3&&!expanded&&mode==='wire'){
+      if(gesture.type==='pan'&&e.buttons===3&&!expanded&&!pickingPackageWire&&mode==='wire'){
         const s=snap(worldPoint(e));gesture={type:'wire',start:s.point,a:s.anchor,current:s.point,moved:false,pointerId:e.pointerId,lastPointer:q};
       }
       if(gesture.type==='wire'){
@@ -488,6 +491,12 @@
     else {selected=g.wire?{type:'wire',id:g.wire}:null;if(g.wire)activateWire({scope:'root',id:g.wire});else renderSelection();}
   }
   svg.addEventListener('pointerup',e=>finish(e));svg.addEventListener('pointercancel',e=>finish(e,true));
+  svg.addEventListener('click',e=>{
+    if(!pickingPackageWire)return;
+    e.preventDefault();e.stopImmediatePropagation();
+    const wire=e.target.closest('[data-wire]');
+    if(wire){packageWireId=wire.dataset.wire;returnToPackageDialog();}
+  },true);
   function highlightExpanded(target){
     const net=target.closest('[data-expanded-net]');svg.querySelectorAll('[data-expanded-net]').forEach(el=>{el.classList.toggle('is-focused',!!net&&el===net);el.classList.toggle('is-muted',!!net&&el!==net);});
     if(net?.dataset.expandedWire){const scope=expanded.instanceView?expanded.scope+(net.dataset.expandedScope||'root').slice(4):(net.dataset.expandedScope||'root');wireInspectorTarget={scope,id:net.dataset.expandedWire};try{activateWire(wireInspectorTarget);const current=svg.querySelector('[data-expanded-net="'+net.dataset.expandedNet+'"]');svg.querySelectorAll('[data-expanded-net]').forEach(el=>{el.classList.toggle('is-focused',el===current);el.classList.toggle('is-muted',el!==current);});}catch(error){toast(error.message);}}
@@ -499,6 +508,7 @@
   svg.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(-e.deltaY*.0013),localPoint(e),true);},{passive:false});
   document.addEventListener('keydown',e=>{
     if($('minecraft-dialog').open||$('wireworld-dialog')?.open)return;
+    if(pickingPackageWire){if(e.key==='Escape'){e.preventDefault();returnToPackageDialog();}return;}
     if(pastePreview){if(e.key==='Escape'){e.preventDefault();cancelPaste();}else if(!e.target.matches('input,select,textarea'))e.preventDefault();return;}
     if(e.key==='Escape'&&placement){e.preventDefault();endPlacement(null,true);return;}
     if(e.target.matches('input,select,textarea')||e.target.isContentEditable||document.querySelector('dialog[open]')||placement)return;
@@ -520,8 +530,53 @@
   $('expand-layers').onclick=()=>{if(gateEditor||expanded?.instanceView||gesture||placement)return;$('layers-count').value=String(expanded?.maxLayers||1);$('layers-error').textContent='';$('layers-dialog').showModal();$('layers-count').focus();$('layers-count').select();};
   $('layers-form').onsubmit=e=>{e.preventDefault();const text=$('layers-count').value.trim(),layers=Number(text);if(!/^[0-9]+$/.test(text)||!Number.isInteger(layers)||layers<1||layers>C.MAX_DEPTH){$('layers-error').textContent='请输入 1–'+C.MAX_DEPTH+' 之间的整数';return;}const viewportAnchor=expanded&&!expanded.view.pending?{camera:{...camera},anchor:window.LogicExpanded.captureAnchor(expanded.view,{x:(svg.clientWidth/2-camera.x)/camera.scale,y:(svg.clientHeight/2-camera.y)/camera.scale})}:null;$('layers-dialog').close();if(expanded?.maxLayers===layers)return;stopRunning();changeExpansionLayers(layers,viewportAnchor);};$('rotate').onclick=rotateSelected;$('back-to-circuit').onclick=returnToCircuit;$('exit-gate').onclick=returnToCircuit;$('debug').onclick=()=>enterExpanded(selected?.id);
   $('help').onclick=()=>$('help-dialog').showModal();document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-  $('package').onclick=()=>{try{const d=C.makeDefinition(state,'新逻辑门');$('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';$('package-error').textContent='';$('package-dialog').showModal();$('gate-name').focus();}catch(e){toast(e.message);}};
-  $('package-form').onsubmit=e=>{e.preventDefault();try{if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');const d=C.makeDefinition(state,$('gate-name').value);d.name=C.uniqueName(d.name,definitionNames());change(()=>state.definitions[uid('g')]=d);$('package-dialog').close();$('gate-name').value='';toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');}catch(e){$('package-error').textContent=e.message;}};
+  function updatePackageWire(){
+    const index=state.wires.findIndex(wire=>wire.id===packageWireId);
+    $('package-wire-status').textContent=index<0?'自定义导线（可选）。选线后，门名会显示为「名称_导线当前值」。':'自定义导线已选定（第 '+(index+1)+' 根）。门名会显示为「名称_导线当前值」。';
+    $('package-wire-pick').disabled=!state.wires.length;
+    $('package-wire-clear').hidden=index<0;
+  }
+  function setPackageWirePicking(active){
+    pickingPackageWire=active;
+    $('package').hidden=active;
+    $('package-wire-return').hidden=!active;
+  }
+  function returnToPackageDialog(){
+    setPackageWirePicking(false);
+    $('toast').hidden=true;
+    updatePackageWire();
+    $('package-dialog').showModal();
+    $('gate-name').focus();
+  }
+  $('package-wire-pick').onclick=()=>{
+    $('package-dialog').close();
+    setPackageWirePicking(true);
+    svg.focus({preventScroll:true});
+    toast('在画布上左键点选一根导线，按 Esc 返回封装。');
+  };
+  $('package-wire-return').onclick=returnToPackageDialog;
+  $('package-wire-clear').onclick=()=>{packageWireId=null;updatePackageWire();};
+  $('package').onclick=()=>{
+    try{
+      const d=C.makeDefinition(state,'新逻辑门');
+      packageWireId=null;
+      $('package-summary').textContent=d.inputs.length+' 个输入 · '+d.outputs.length+' 个输出 · '+state.nodes.length+' 个元件';
+      $('package-error').textContent='';
+      returnToPackageDialog();
+    }catch(e){toast(e.message);}
+  };
+  $('package-form').onsubmit=e=>{
+    e.preventDefault();
+    try{
+      if(Object.keys(state.definitions).length>=80)throw Error('自定义门数量已达 80 个');
+      const d=C.makeDefinition(state,$('gate-name').value);
+      if(d.wires.some(wire=>wire.id===packageWireId))d.nameWire=packageWireId;
+      d.name=C.uniqueName(d.name,definitionNames());
+      change(()=>state.definitions[uid('g')]=d);
+      $('package-dialog').close();$('gate-name').value='';
+      toast('已封装「'+d.name+'」，可以在左侧元件库找到它。');
+    }catch(e){$('package-error').textContent=e.message;}
+  };
   $('new').onclick=()=>$('new-dialog').showModal();$('confirm-new').onclick=()=>{stopRunning();change(()=>{state={...initial(),definitions:state.definitions};selected=null;});fit(true);$('new-dialog').close();};
   function downloadSave(filename,text,type='application/json'){
     if(typeof window.GameHubBridge?.saveFile==='function'){
