@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),P=require('../src/presets'),C=require('../src/core');
 test('every built-in save is a valid independent circuit and passes its complete truth table',()=>{
-  assert.deepEqual(P.list.map(p=>p.id),['nand','not','and','or','xor','adder','lambda','oscillator','counter4','pulse','calculator8','register8','ram256']);
+  assert.deepEqual(P.list.map(p=>p.id),['nand','not','and','or','xor','adder','lambda','turing8','oscillator','counter4','pulse','calculator8','register8','ram256']);
   for(const p of P.list.slice(0,6)){const state=C.validate(P.load(p.id)),inputs=state.nodes.filter(n=>n.type==='input');for(let row=0;row<2**inputs.length;row++){inputs.forEach((n,i)=>n.value=row>>i&1);const a=row&1,b=row>>1&1,total=a+b+(row>>2&1),result=C.simulate(state);const expected=p.id==='nand'?[Number(!(a&&b))]:p.id==='not'?[1-a]:p.id==='and'?[a&b]:p.id==='or'?[a|b]:p.id==='xor'?[a^b]:[total&1,total>>1];assert.deepEqual(state.nodes.filter(n=>n.type==='output').map(n=>result.outputs[n.id][0]),expected,p.id+' row '+row);assert.deepEqual(result.issues,[]);}state.nodes[0].label='changed';assert.equal(P.load(p.id).nodes[0].label,'A');}
   assert.throws(()=>P.load('missing'),/默认存档/);
 });
@@ -34,6 +34,33 @@ test('eight-bit calculator adds and subtracts with wrapping and carry/borrow out
 test('eight-bit register writes on steps only, holds when disabled, and clears through delay reset',()=>{
   const state=P.load('register8'),data=state.nodes.find(n=>n.id==='data'),write=state.nodes.find(n=>n.id==='write'),read=()=>Number(C.decimal(C.simulate(state).outputs.o));
   let expected=0;for(let value=0;value<256;value++){data.value=value;write.value=1;assert.equal(read(),expected);state.delayState=C.step(state);expected=value;assert.equal(read(),expected);}write.value=0;data.value=23;state.delayState=C.step(state);assert.equal(read(),255);state.delayState=C.resetDelays(state,'all');assert.equal(read(),0);
+});
+
+test('bounded Turing machine performs one read, write and head transition per tick',()=>{
+  const state=C.validate(P.load('turing8')),simulate=C.createSimulator();
+  const data=state.nodes.find(node=>node.id==='data'),load=state.nodes.find(node=>node.id==='load');
+  const read=()=>{
+    const result=simulate(state);
+    assert.deepEqual(result.issues,[]);
+    return ['tape','index','halted'].map(id=>Number(C.decimal(result.outputs[id])));
+  };
+  const step=()=>{state.delayState=C.step(state);};
+  assert.deepEqual(read(),[7,0,0]);
+  for(let value=0;value<256;value++){
+    data.value=value;load.value=1;step();load.value=0;
+    let tape=value,index=0,halted=0;
+    assert.deepEqual(read(),[tape,index,halted]);
+    while(!halted){
+      const symbol=tape>>index&1;
+      tape^=1<<index;
+      if(symbol&&index<7)index++;
+      else halted=1;
+      step();
+      assert.deepEqual(read(),[tape,index,halted]);
+    }
+    assert.equal(tape,(value+1)%256);
+    step();assert.deepEqual(read(),[tape,index,1]);
+  }
 });
 
 test('256 by 8 memory independently writes and reads every address without altering other words',()=>{

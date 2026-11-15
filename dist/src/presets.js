@@ -8,6 +8,7 @@
     {id:'xor',name:'异或门',description:'两个输入不同时，输出为1。'},
     {id:'adder',name:'一位全加器',description:'A、B和进位相加，输出和与进位。'},
     {id:'lambda',name:'λ 演算 · 丘奇布尔值',description:'试验 (λp.λa.λb. p a b) P A B。P=1 代表 TRUE（λa.λb.a），结果为 A；P=0 代表 FALSE（λa.λb.b），结果为 B。修改 P、A、B 即可看到结果。'},
+    {id:'turing8',name:'TM 图灵机 · 八格纸带加一',description:'默认纸带是 7。点「下一步运行」执行一次转移：读到 1 就写 0，并向左一格；读到 0 就写 1 并停机。到纸带左端仍有进位时，结果回绕到 0。读写头位置从右到左为 0～7。换一组数据时，打开「装入纸带」、运行一步，然后关闭装入再继续。'},
     {id:'oscillator',name:'时序振荡器 · 与非门＋延迟线',description:'按“下一步运行”让输出在0和1之间交替，也可以开启连续运行。'},
     {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'},
     {id:'pulse',name:'短期输入 · 与非门＋延迟线',description:'4个与非门搭成异或门，将原输入与延迟一拍的输入比较。切换输入产生一个脉冲，点击“下一步运行”后回到0；从0变1和从1变0都会触发。已附带可复用的短期输入自制门。'},
@@ -77,6 +78,77 @@
     demo.connect('apply','result');
     return demo.state;
   }
+  function turingExample(definitions){
+    addMux(definitions);
+    function logic(b,id,type,x,y,...sources){
+      b.gate(id,'preset_'+type,x,y);
+      sources.forEach((source,port)=>b.connect(source,id,port));
+      return id;
+    }
+
+    const tape=builder(definitions);
+    tape.input('symbols',8,0,'纸带');
+    tape.input('head',8,180,'读写头');
+    tape.input('run',1,360,'运行');
+    tape.node('symbols_bits','splitter',260,0,null,{bits:8});
+    tape.node('head_bits','splitter',260,420,null,{bits:8});
+    tape.connect('symbols','symbols_bits');
+    tape.connect('head','head_bits');
+    tape.node('write_bus','hub',1040,120,null,{bits:8});
+    const reads=[];
+    for(let bit=0;bit<8;bit++){
+      const y=bit*180,symbol=['symbols_bits',bit],cursor=['head_bits',bit];
+      const write=logic(tape,'write'+bit,'and',520,y,cursor,'run');
+      const next=logic(tape,'symbol'+bit,'xor',780,y,symbol,write);
+      tape.connect(next,'write_bus',bit);
+      reads.push(logic(tape,'read'+bit,'and',520,y+85,cursor,symbol));
+    }
+    function reduceOr(sources,y){
+      return sources.reduce((left,right,index)=>logic(tape,'or'+y+'_'+index,'or',1050+250*index,y,left,right));
+    }
+    const read=reduceOr(reads,1520);
+    const position=[[1,3,5,7],[2,3,6,7],[4,5,6,7]].map((indices,bit)=>reduceOr(indices.map(index=>['head_bits',index]),1700+180*bit));
+    tape.node('position','hub',2200,1910,null,{bits:3});
+    position.forEach((source,bit)=>tape.connect(source,'position',bit));
+    tape.output('written',8,2960,120,'写入后纸带');tape.connect('write_bus','written');
+    tape.output('symbol',1,2960,1520,'当前符号');tape.connect(read,'symbol');
+    tape.output('index',3,2960,1910,'读写头位置');tape.connect('position','index');
+    definitions.preset_turing_tape=C.makeDefinition(tape.state,'图灵机纸带读写');
+
+    const tm=builder(definitions);
+    tm.input('data',8,0,'初始纸带');
+    tm.input('load',1,180,'装入');
+    tm.node('origin','input',0,340,'起始读写头',{bits:8,value:1,constant:true});
+    tm.node('symbols','delay',360,40,'纸带',{bits:8});
+    tm.node('head','delay',360,240,'读写头',{bits:8});
+    tm.node('running','delay',360,470,'运行状态');
+    logic(tm,'access','turing_tape',660,90,'symbols','head','running');
+    tm.node('head_bits','splitter',660,390,null,{bits:8});tm.connect('head','head_bits');
+    tm.node('shift','hub',990,410,null,{bits:8});
+    for(let bit=1;bit<8;bit++)tm.connect(['head_bits',bit-1],'shift',bit);
+    const awayFromEnd=logic(tm,'can_move','not',990,680,['head_bits',7]);
+    const carrying=logic(tm,'carry','and',990,220,'running',['access',1]);
+    const move=logic(tm,'move_left','and',1250,220,carrying,awayFromEnd);
+    const nextHead=logic(tm,'next_head','mux8',1510,400,'head','shift',move);
+    tm.connect(logic(tm,'load_head','mux8',1780,400,nextHead,'origin','load'),'head');
+    tm.connect(logic(tm,'load_tape','mux8',1780,80,['access',0],'data','load'),'symbols');
+    tm.connect(logic(tm,'next_run','or',1510,650,move,'load'),'running');
+    const halted=logic(tm,'halt','not',1780,650,'running');
+    tm.output('tape',8,2070,40,'纸带');tm.connect('symbols','tape');
+    tm.output('index',3,2070,240,'读写头位置');tm.connect(['access',2],'index');
+    tm.output('halted',1,2070,470,'已停机');tm.connect(halted,'halted');
+    definitions.preset_turing8=C.makeDefinition(tm.state,'八格纸带加一图灵机');
+
+    const demo=builder(definitions);
+    demo.input('data',8,0,'初始纸带',7);
+    demo.input('load',1,220,'装入纸带');
+    logic(demo,'machine','turing8',360,115,'data','load');
+    demo.output('tape',8,720,0,'纸带');demo.connect('machine','tape');
+    demo.output('index',3,720,195,'读写头位置');demo.connect(['machine',1],'index');
+    demo.output('halted',1,720,375,'已停机');demo.connect(['machine',2],'halted');
+    demo.state.delayState={'root/machine/symbols':7,'root/machine/head':1,'root/machine/running':1};
+    return demo.state;
+  }
   function addRegister(definitions){
     const b=builder(definitions);b.input('data',8,0,'写入数据');b.input('write',1,180,'写入');b.node('q','delay',260,340,'八位记忆',{bits:8});b.gate('select','preset_mux8',540,100);b.connect('q','select');b.connect('data','select',1);b.connect('write','select',2);b.connect('select','q');b.output('o',8,820,340,'保存的数');b.connect('q','o');definitions.preset_register8=C.makeDefinition(b.state,'八位可写寄存器');
   }
@@ -96,6 +168,7 @@
   function load(id){
     if(!list.some(p=>p.id===id))throw Error('没有这个默认存档');const definitions=library();
     if(id==='lambda')return lambdaExample(definitions);
+    if(id==='turing8')return turingExample(definitions);
     if(!['calculator8','register8','ram256'].includes(id))return {...basic(id),definitions};
     if(id==='calculator8')addCalculator(definitions);else{addMux(definitions);addRegister(definitions);if(id==='ram256')addMemory(definitions);}
     const b=builder(definitions);
