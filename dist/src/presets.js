@@ -7,6 +7,7 @@
     {id:'or',name:'或门',description:'任意输入为1时，输出为1。'},
     {id:'xor',name:'异或门',description:'两个输入不同时，输出为1。'},
     {id:'adder',name:'一位全加器',description:'A、B和进位相加，输出和与进位。'},
+    {id:'lambda',name:'λ 演算 · 丘奇布尔值',description:'试验 (λp.λa.λb. p a b) P A B。P=1 代表 TRUE（λa.λb.a），结果为 A；P=0 代表 FALSE（λa.λb.b），结果为 B。修改 P、A、B 即可看到结果。'},
     {id:'oscillator',name:'时序振荡器 · 与非门＋延迟线',description:'按“下一步运行”让输出在0和1之间交替，也可以开启连续运行。'},
     {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'},
     {id:'pulse',name:'短期输入 · 与非门＋延迟线',description:'4个与非门搭成异或门，将原输入与延迟一拍的输入比较。切换输入产生一个脉冲，点击“下一步运行”后回到0；从0变1和从1变0都会触发。已附带可复用的短期输入自制门。'},
@@ -50,6 +51,32 @@
     for(let bit=0;bit<8;bit++){const y=bit*220;b.node('left'+bit,'nand',520,y);b.connect(['sa',bit],'left'+bit);b.connect('ns','left'+bit,1);b.node('right'+bit,'nand',520,y+100);b.connect(['sb',bit],'right'+bit);b.connect('s','right'+bit,1);b.node('join'+bit,'nand',780,y+50);b.connect('left'+bit,'join'+bit);b.connect('right'+bit,'join'+bit,1);b.connect('join'+bit,'pack',bit);}
     b.output('o',8,1280,160,'选择结果');b.connect('pack','o');definitions.preset_mux8=C.makeDefinition(b.state,'八位二选一');
   }
+  function lambdaExample(definitions){
+    addMux(definitions);
+    const apply=builder(definitions);
+    apply.input('p',1,0,'P');
+    apply.input('a',8,180,'A');
+    apply.input('b',8,360,'B');
+    apply.gate('select','preset_mux8',360,150);
+    apply.connect('b','select');
+    apply.connect('a','select',1);
+    apply.connect('p','select',2);
+    apply.output('o',8,720,160,'P A B');
+    apply.connect('select','o');
+    definitions.preset_lambda=C.makeDefinition(apply.state,'丘奇布尔应用');
+
+    const demo=builder(definitions);
+    demo.input('p',1,0,'P（0 FALSE／1 TRUE）',1);
+    demo.input('a',8,180,'A',5);
+    demo.input('b',8,360,'B',3);
+    demo.gate('apply','preset_lambda',360,150);
+    demo.connect('p','apply');
+    demo.connect('a','apply',1);
+    demo.connect('b','apply',2);
+    demo.output('result',8,720,160,'P A B');
+    demo.connect('apply','result');
+    return demo.state;
+  }
   function addRegister(definitions){
     const b=builder(definitions);b.input('data',8,0,'写入数据');b.input('write',1,180,'写入');b.node('q','delay',260,340,'八位记忆',{bits:8});b.gate('select','preset_mux8',540,100);b.connect('q','select');b.connect('data','select',1);b.connect('write','select',2);b.connect('select','q');b.output('o',8,820,340,'保存的数');b.connect('q','o');definitions.preset_register8=C.makeDefinition(b.state,'八位可写寄存器');
   }
@@ -68,6 +95,7 @@
   }
   function load(id){
     if(!list.some(p=>p.id===id))throw Error('没有这个默认存档');const definitions=library();
+    if(id==='lambda')return lambdaExample(definitions);
     if(!['calculator8','register8','ram256'].includes(id))return {...basic(id),definitions};
     if(id==='calculator8')addCalculator(definitions);else{addMux(definitions);addRegister(definitions);if(id==='ram256')addMemory(definitions);}
     const b=builder(definitions);
