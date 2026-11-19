@@ -43,7 +43,7 @@
   function circuitSignals(source, { preserveNands = false } = {}) {
     let graph;
     try {
-      graph = Domino.flatten(source);
+      graph = Domino.flatten(source,{preservePortDirection:true});
     } catch (error) {
       if (error.message.includes('反馈环')) throw Error('请用延迟线断开反馈环，再转换为康威生命游戏');
       throw error;
@@ -71,6 +71,10 @@
       return nets.get(id);
     }
     for (const p of graph.order) {
+      if (p.type === 'buffer') {
+        expressions.set(p,net(p.inputs[0]));
+        continue;
+      }
       const a = net(p.inputs[0]), b = net(p.inputs[1]);
       if (preserveNands) {
         const and = { op: 'AND', args: [a, b], size: a.size + b.size + 1 };

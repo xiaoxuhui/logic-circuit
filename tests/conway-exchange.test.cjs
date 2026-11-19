@@ -10,6 +10,26 @@ const Library = require('../src/vendor/conway/logic-function-library');
 const parseDefault = item => Parse.parse(Expand.instantiateFunction(item,
   Object.fromEntries(item.inputs.map(input => [input.name, input.defaultValue]))));
 
+test('a custom wired OR keeps its inputs separate from its output and sibling branches', () => {
+  for(const bits of [1,3]){
+    const wire=(id,from,to,port=0)=>({id,a:{node:from,dir:'out',port:0},b:{node:to,dir:'in',port}});
+    const definition=Core.makeDefinition({nodes:[
+      {id:'x',type:'input',bits,x:0,y:0},{id:'y',type:'input',bits,x:0,y:160},
+      {id:'o',type:'output',bits,x:300,y:80}],wires:[wire('x','x','o'),wire('y','y','o')]},'导线或门');
+    const source={version:1,definitions:{or:definition},nodes:[
+      {id:'a',type:'input',bits,x:0,y:0},{id:'b',type:'input',bits,x:0,y:160},
+      {id:'gate',type:'custom',def:'or',x:300,y:80},
+      {id:'o',type:'output',bits,x:600,y:80},{id:'branch',type:'output',bits,x:600,y:240}],
+      wires:[wire('a','a','gate'),wire('b','b','gate',1),wire('o','gate','o'),wire('branch','a','branch')]};
+    for(let a=0;a<2**bits;a++)for(let b=0;b<2**bits;b++){
+      source.nodes[0].value=a;source.nodes[1].value=b;
+      const expected=Object.values(Core.simulate(source).outputs).flat();
+      const actual=Exchange.exportFunctions(source).functions.map(item=>parseDefault(item).expected);
+      assert.deepEqual(actual,expected,`${bits} bits, ${a} OR ${b}, with independent A output`);
+    }
+  }
+});
+
 test('native Conway function-library round trip preserves every full-adder input row and both outputs', () => {
   for (let row = 0; row < 8; row++) {
     const source = Presets.load('adder');

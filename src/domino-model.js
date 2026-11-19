@@ -12,10 +12,14 @@
   'use strict';
   // A NOT's input topples a bridge backwards before the supply front arrives.
   // Propagation is derived from falling/standing footprints, not logical links.
-  function flatten(source){
+  function flatten(source,{preservePortDirection=false}={}){
     const state=C.validate(source),parent=new Map(),items=[],forces=[];
     const find=k=>{if(!parent.has(k))parent.set(k,k);let p=k;while(parent.get(p)!==p)p=parent.get(p);while(k!==p){const n=parent.get(k);parent.set(k,p);k=n;}return p;};
     const join=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent.set(a,b);},port=(s,id,d,p,b)=>find(s+'/'+id+':'+d+':'+p+':'+b);
+    function link(input,output,id){
+      if(preservePortDirection)items.push({id,type:'buffer',inputs:[input],output});
+      else join(input,output);
+    }
     function visit(local,scope,depth=0){
       if(depth>C.MAX_DEPTH)throw Error('骨牌转换：嵌套过深');
       const net=C.nets({...local,definitions:state.definitions});
@@ -24,8 +28,25 @@
         const g=net.groups.get(net.wireNet.get(id));if(!g)continue;for(let b=0;b<g.width;b++){const p=[...g.ports.values()].find(p=>p.width>b);if(p)forces.push({token:port(scope,p.node,p.dir,p.port,b),value:bits[b]||0});}
       }
       for(const n of local.nodes){const s=C.spec(n,state.definitions),p=(d,i,b)=>port(scope,n.id,d,i,b);
-        if(n.type==='custom'){const def=state.definitions[n.def],child=scope+'/'+n.id;visit(def,child,depth+1);for(const [d,ports] of [['in',def.inputs],['out',def.outputs]])ports.forEach((q,i)=>{for(let b=0;b<q.width;b++)join(p(d,i,b),port(child,q.id,d==='in'?'out':'in',0,b));});continue;}
-        if(n.type==='hub'||n.type==='splitter'){for(let b=0;b<(n.bits||1);b++)join(p(n.type==='hub'?'out':'in',0,b),p(n.type==='hub'?'in':'out',b,0));continue;}
+        if(n.type==='custom'){
+          const def=state.definitions[n.def],child=scope+'/'+n.id;
+          visit(def,child,depth+1);
+          for(const [direction,ports] of [['in',def.inputs],['out',def.outputs]])ports.forEach((boundary,index)=>{
+            for(let bit=0;bit<boundary.width;bit++){
+              const outer=p(direction,index,bit),inner=port(child,boundary.id,direction==='in'?'out':'in',0,bit);
+              link(direction==='in'?outer:inner,direction==='in'?inner:outer,child+'/boundary:'+direction+':'+index+':'+bit);
+            }
+          });
+          continue;
+        }
+        if(n.type==='hub'||n.type==='splitter'){
+          for(let bit=0;bit<(n.bits||1);bit++){
+            const input=n.type==='hub'?p('in',bit,0):p('in',0,bit);
+            const output=n.type==='hub'?p('out',0,bit):p('out',bit,0);
+            link(input,output,scope+'/'+n.id+'/bit:'+bit);
+          }
+          continue;
+        }
         if(scope!=='root'&&['input','output'].includes(n.type)&&!n.constant)continue;
         for(let b=0;b<(n.type==='nand'?1:n.bits||1);b++)items.push({id:scope+'/'+n.id+':'+b,node:n.id,scope,bit:b,type:n.type,...(n.constant?{constant:true}:{}),label:(n.label||{input:'输入',output:'输出',nand:'与非门',delay:'延迟线'}[n.type])+(n.bits>1?' · b'+b:''),inputs:s.inputs.map((_,i)=>p('in',i,b)),output:s.outputs.length?p('out',0,b):null,value:C.bitArray(n.type==='delay'?state.delayState?.[scope+'/'+n.id]||0:n.value||0,n.bits||1)[b],sourceY:n.y,sourceX:n.x});
       }
@@ -33,9 +54,10 @@
     visit(state,'root');for(const p of items){p.inputs=p.inputs.map(find);if(p.output)p.output=find(p.output);}
     const forced=new Map(forces.map(f=>[find(f.token),f.value]));for(const [token,value] of forced)items.push({id:'forced:'+token,type:'input',label:'临时输入',bit:0,value,output:token,inputs:[],forced:true});
     const drivers=new Map();for(const p of items)if(p.output&&(!forced.has(p.output)||p.forced)){if(!drivers.has(p.output))drivers.set(p.output,[]);drivers.get(p.output).push(p);}
-    const gates=items.filter(p=>p.type==='nand'),waiting=new Map(),users=new Map(),order=[];
-    for(const p of gates){const deps=new Set(p.inputs.flatMap(t=>(drivers.get(t)||[]).filter(d=>d.type==='nand')));waiting.set(p,deps.size);if(!deps.size)order.push(p);for(const d of deps){if(!users.has(d))users.set(d,[]);users.get(d).push(p);}}
-    for(let i=0;i<order.length;i++){const p=order[i];p.level=1+Math.max(0,...p.inputs.flatMap(t=>(drivers.get(t)||[]).filter(d=>d.type==='nand').map(d=>d.level)));for(const q of users.get(p)||[])if(waiting.set(q,waiting.get(q)-1).get(q)===0)order.push(q);}
+    const combinational=p=>p.type==='nand'||p.type==='buffer';
+    const gates=items.filter(combinational),waiting=new Map(),users=new Map(),order=[];
+    for(const p of gates){const deps=new Set(p.inputs.flatMap(t=>(drivers.get(t)||[]).filter(combinational)));waiting.set(p,deps.size);if(!deps.size)order.push(p);for(const d of deps){if(!users.has(d))users.set(d,[]);users.get(d).push(p);}}
+    for(let i=0;i<order.length;i++){const p=order[i];p.level=1+Math.max(0,...p.inputs.flatMap(t=>(drivers.get(t)||[]).filter(combinational).map(d=>d.level)));for(const q of users.get(p)||[])if(waiting.set(q,waiting.get(q)-1).get(q)===0)order.push(q);}
     if(order.length!==gates.length)throw Error('存在没有延迟线的反馈环：一次倒下的骨牌不能循环触发。请在反馈中加入延迟线，再逐轮运行。');
     return {items,drivers,order};
   }
