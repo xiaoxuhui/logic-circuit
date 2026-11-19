@@ -184,8 +184,11 @@
       return { label, value, x, y, routed: true, switchRLE: eaterRLE };
     });
     const registers = updates.map(({ delayId: id, initialValue }) => ({ id, initialValue, gun: null }));
-    return { cells, inputs: inputPorts, outputs: probes, registers, generation: 0, period,
-      loop: true, feedback: 'timed', returnPorts, gates, portWords };
+    // Include the source tile and the longest path from the input bank to any output.
+    const arrival = sinks.reduce((latest,sink) => Math.max(latest,WIRE*(sink.column+sink.row)+sink.shift),0);
+    const generation = period ? 0 : Math.ceil((arrival+2*WIRE)*HALF_TICK/60)*60;
+    return { cells, inputs: inputPorts, outputs: probes, registers, generation, period, signal: 'lwss',
+      loop: updates.length>0, feedback: updates.length ? 'timed' : null, returnPorts, gates, portWords };
   }
 
   return { build };

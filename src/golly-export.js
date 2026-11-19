@@ -75,7 +75,8 @@
     const updates = signals.outputs.filter(output => output.delayId);
     const close = options.loop && !hasTemporaryWires(source);
     const feedbacks = close ? simpleFeedback(updates) : [];
-    const pattern = close && updates.length && !feedbacks.length
+    const timed = (!updates.length && options.loop) || (close && updates.length && !feedbacks.length);
+    const pattern = timed
       ? Timed.build(Exchange.circuitSignals(source, { preserveNands: true }))
       : layoutPattern(signals, { ...options, feedbacks, rleInputs: options.seedRegisters !== false });
     if (options.seedRegisters !== false) addPortWords(pattern);
@@ -310,7 +311,7 @@
         : !routed ? 'unused, eater' : value ? 'source marker' : 'eater'})`);
   }
 
-  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, period, returnPorts = [], gates = [] }, source) {
+  function toRLE({ cells, inputs = [], outputs, generation, loop, feedback, period, signal, returnPorts = [], gates = [] }, source) {
     const { minX, minY, body } = encodeCells(cells);
     const comments = outputs.map(({ label, x, y }) => `#C ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`);
     return [`#CXRLE Pos=${minX},${minY} Gen=0`, ...(source ? Exchange.gollySaveComments(source) : []),
@@ -318,7 +319,9 @@
       '#C The words INPUT and OUTPUT are made of still-life blocks next to the ports.',
       ...(inputs.some(input => input.switchRLE) ? ['#C A switch eater is 0. Remove only the seven cells between its two guide blocks for 1.',
         '#C To set 0, restore the eater at the input coordinates listed below when the switch area is clear.'] : []),
-      ...(period ? [`#C Sample the output probes at generation 0 and every ${period} generations thereafter.`,
+      ...(signal === 'lwss' ? [period
+        ? `#C Sample the output probes at generation 0 and every ${period} generations thereafter.`
+        : `#C Sample every 60 generations after generation ${generation}; wait ${generation} generations after changing an input.`,
         '#C An eastbound lightweight spaceship at the marked output is 1.',
         '#C Timed Life gate patterns after Myreen and Carneiro, CC BY 4.0. https://doi.org/10.4230/LIPIcs.ITP.2025.25']
         : [`#C After about ${generation} generations, look for moving gliders in each marked 40x40 output area (present=1).`]),
@@ -330,7 +333,7 @@
         `#C Feedback ${label.replace(/[\r\n]/g, ' ')}: output (${output.x}, ${output.y}) -> delay input (${input.x}, ${input.y})`),
       ...gates.map(({ id, label, x, y }) => `#C NAND ${id} ${label.replace(/[\r\n]/g, ' ')} at (${x}, ${y})`),
       ...inputComments(inputs).map(comment => '#C '+comment), ...comments,
-      ...(period ? [] : ['#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
+      ...(signal === 'lwss' ? [] : ['#C Gate tiles from rlongdragon, based on Nicholas Carlini’s designs.',
         ...notice.split('\n').map(text => `#C ${text}`)]),
       body, ''].join('\n');
   }
