@@ -131,10 +131,9 @@
     $('life-generation').textContent=`第 ${data.generation.toLocaleString()} 代`;
     $('life-timing').textContent=data.period ? `每 ${data.period.toLocaleString()} 代一拍` : '';
     $('life-read-at').textContent=data.reading?`第 ${data.reading.generation.toLocaleString()} 代`:'等待读取';
-    $('life-next').textContent=data.period?'下一拍':'运行到输出';
     if(data.bounds||data.inputs.some((port,i)=>port.value!==previous?.inputs[i]?.value))ports($('life-inputs'),data.inputs,true);
     if(data.bounds||data.reading?.generation!==previous?.reading?.generation)ports($('life-outputs'),data.outputs.map((port,i)=>({...port,value:data.reading?.values[i]})),false);
-    message(data.notice || (running?'正在运行':data.openLoop?'临时导线输入只转换当前一拍。':data.period?'可用「下一拍」读取同步输出。':'点击「运行到输出」读取信号。'),!!data.notice);
+    message(data.notice || (running?'正在运行':data.openLoop?'临时导线输入只转换当前一拍。':'点击「下一拍」推进并读取输出。'),!!data.notice);
     updateControls();requestView();flushToggle();nextRun();
   }
 
