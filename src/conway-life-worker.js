@@ -32,7 +32,7 @@ function load() {
 
 function report(fit = false, notice = '') {
   const generation = world.generation;
-  if (period ? generation % period === 0 : generation >= settleAt && generation % 60 === 0) {
+  if (generation >= settleAt && (period ? generation % period === 0 : generation % 60 === 0)) {
     reading = { generation, values:outputs.map(({x,y}) => Number((period ? ship : glider).every(([dx,dy]) => world.get(x+dx,y+dy)))) };
   }
   postMessage({type:'state',generation,period,openLoop,notice,reading,
@@ -53,7 +53,8 @@ function toggle(index) {
   }
   for(const [dx,dy] of cells)world.set(x+dx,y+dy,value);
   input.value=1-value;
-  if(!period) settleAt=world.generation+settleDuration;
+  settleAt=world.generation+(period||settleDuration);
+  reading=null;
   return '';
 }
 

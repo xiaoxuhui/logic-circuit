@@ -29,3 +29,27 @@ test('Life fast-forward matches B3/S23 across jumps, edits, and the original bou
   }
   assert.equal(world.generation,148);
 });
+
+test('Life XOR clears stale output after an input change and reads the propagated result', () => {
+  const fs=require('node:fs'),vm=require('node:vm');
+  let message;
+  const context=vm.createContext({
+    self:{},importScripts(){},
+    LogicGollyExport:require('../src/golly-export'),LogicConwayLife:{World},
+    postMessage(value){message=value;},
+  });
+  vm.runInContext(fs.readFileSync(require.resolve('../src/conway-life-worker'),'utf8'),context);
+  const send=data=>{
+    context.self.onmessage({data});
+    assert.equal(message.type,'state',message.message);
+    return message;
+  };
+  const source=require('../src/presets').load('xor');
+  send({type:'init',source});
+  assert.equal(send({type:'step',amount:'sample'}).reading.values[0],0);
+  assert.equal(send({type:'toggle',index:0}).reading,null);
+  assert.equal(send({type:'step',amount:1}).reading,null);
+  assert.equal(send({type:'step',amount:'sample'}).reading.values[0],1);
+  assert.equal(send({type:'toggle',index:1}).reading,null);
+  assert.equal(send({type:'step',amount:'sample'}).reading.values[0],0);
+});
