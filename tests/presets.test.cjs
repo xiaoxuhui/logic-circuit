@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),P=require('../src/presets'),C=require('../src/core');
 test('every built-in save is a valid independent circuit and passes its complete truth table',()=>{
-  assert.deepEqual(P.list.map(p=>p.id),['nand','not','and','or','xor','adder','lambda','turing8','oscillator','counter4','pulse','calculator8','register8','ram256']);
+  assert.deepEqual(P.list.map(p=>p.id),['nand','not','and','or','xor','adder','lambda','beta','turing8','oscillator','counter4','pulse','calculator8','register8','ram256']);
   for(const p of P.list.slice(0,6)){const state=C.validate(P.load(p.id)),inputs=state.nodes.filter(n=>n.type==='input');for(let row=0;row<2**inputs.length;row++){inputs.forEach((n,i)=>n.value=row>>i&1);const a=row&1,b=row>>1&1,total=a+b+(row>>2&1),result=C.simulate(state);const expected=p.id==='nand'?[Number(!(a&&b))]:p.id==='not'?[1-a]:p.id==='and'?[a&b]:p.id==='or'?[a|b]:p.id==='xor'?[a^b]:[total&1,total>>1];assert.deepEqual(state.nodes.filter(n=>n.type==='output').map(n=>result.outputs[n.id][0]),expected,p.id+' row '+row);assert.deepEqual(result.issues,[]);}state.nodes[0].label='changed';assert.equal(P.load(p.id).nodes[0].label,'A');}
   assert.throws(()=>P.load('missing'),/默认存档/);
 });
@@ -61,6 +61,61 @@ test('bounded Turing machine performs one read, write and head transition per ti
     assert.equal(tape,(value+1)%256);
     step();assert.deepEqual(read(),[tape,index,1]);
   }
+});
+
+test('BLC default performs one capture-avoiding beta contraction per step using NANDs and one delay',()=>{
+  const state=C.validate(P.load('beta')),simulate=C.createSimulator();
+  const input=id=>state.nodes.find(node=>node.id===id);
+  const read=()=>{
+    const result=simulate(state);
+    assert.deepEqual(result.issues,[]);
+    const size=Number(C.decimal(result.outputs.size));
+    return {code:Number(C.decimal(result.outputs.term)).toString(2).padStart(size,'0'),size,
+      normal:result.outputs.normal[0],invalid:result.outputs.invalid_code[0],overflow:result.outputs.overflow[0]};
+  };
+  const step=()=>{state.delayState=C.step(state);return read();};
+  const load=code=>{
+    input('program').value=parseInt(code||'0',2);input('length').value=code.length;
+    input('load').value=1;step();input('load').value=0;return read();
+  };
+  assert.equal(C.countComponents(state).delay,1);
+  assert.ok(C.countComponents(state).nand>0);
+  assert.ok([state,...Object.values(state.definitions)].every(local=>local.nodes.every(node=>['nand','delay','input','output','custom','hub','splitter'].includes(node.type))));
+  const identity='0010',delta='00011010',apply=(a,b)=>'01'+a+b;
+  assert.equal(read().code,apply(apply(identity,identity),identity));
+  assert.equal(step().code,apply(identity,identity));
+  assert.equal(step().code,identity);
+  assert.equal(read().normal,1);
+  assert.equal(step().code,identity);
+
+  load('0001000011010');
+  assert.equal(step().code,'0000110','an outer variable stays free under the substituted lambda');
+  load(apply('0000110',identity));
+  assert.equal(step().code,'000010','the argument keeps its own binder');
+  load('0001001010');
+  assert.equal(step().code,identity,'normal order also contracts inside an abstraction');
+  load(apply('000010',apply(identity,identity)));
+  assert.equal(step().code,identity,'normal order discards an unused argument before reducing it');
+  load(apply(delta,identity));
+  assert.equal(step().code,apply(identity,identity));
+  assert.equal(step().code,identity);
+
+  const omega=apply(delta,delta);
+  load(omega);
+  for(let tick=0;tick<3;tick++){
+    const result=step();assert.equal(result.code,omega);assert.equal(result.normal,0);assert.equal(result.invalid,0);
+  }
+  const growing=apply(delta,'000000110');
+  load(growing);
+  assert.equal(read().overflow,1);
+  assert.equal(step().code,growing,'capacity overflow holds the full original expression');
+  for(const invalid of ['10','001','']){
+    load(invalid);assert.equal(read().invalid,1);const saved=JSON.stringify(state.delayState);step();assert.equal(JSON.stringify(state.delayState),saved);
+  }
+  load(apply(identity,identity));input('run').value=0;
+  assert.equal(step().code,apply(identity,identity));input('run').value=1;assert.equal(step().code,identity);
+  const restored=C.validate(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(C.simulate(restored).outputs,simulate(state).outputs);
 });
 
 test('256 by 8 memory independently writes and reads every address without altering other words',()=>{

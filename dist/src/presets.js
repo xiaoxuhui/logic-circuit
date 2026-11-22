@@ -1,4 +1,4 @@
-(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore);if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicPresets=api;})(typeof globalThis!=='undefined'?globalThis:this,function(C){
+(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.LogicCore,typeof module==='object'&&module.exports?require('./beta-preset.js'):root.LogicBetaPreset);if(typeof module==='object'&&module.exports)module.exports=api;else root.LogicPresets=api;})(typeof globalThis!=='undefined'?globalThis:this,function(C,Beta){
   'use strict';
   const list=Object.freeze([
     {id:'nand',name:'与非门',description:'两个输入都为1时，输出为0。'},
@@ -8,6 +8,7 @@
     {id:'xor',name:'异或门',description:'两个输入不同时，输出为1。'},
     {id:'adder',name:'一位全加器',description:'A、B和进位相加，输出和与进位。'},
     {id:'lambda',name:'λ 演算 · 丘奇布尔值',description:'试验 (λp.λa.λb. p a b) P A B。P=1 代表 TRUE（λa.λb.a），结果为 A；P=0 代表 FALSE（λa.λb.b），结果为 B。修改 P、A、B 即可看到结果。'},
+    {id:'beta',name:'β 归约器 · 19 位 BLC＋延迟线',description:'与非门电路每拍执行一次最左最外 β 归约，一条多位延迟线保存程序和长度。支持所有不超过19位的闭合BLC。默认 ((λx.x)(λx.x))(λx.x)，两拍得到 λx.x（0010）。BLC右对齐，旁边填写有效位数；更换程序后打开“装入程序”、运行一步，再关闭。完成后保持结果；无效输入、归约溢出会亮灯并保持原程序。'},
     {id:'turing8',name:'TM 图灵机 · 八格纸带加一',description:'默认纸带是 7。点「下一步运行」执行一次转移：读到 1 就写 0，并向左一格；读到 0 就写 1 并停机。到纸带左端仍有进位时，结果回绕到 0。读写头位置从右到左为 0～7。换一组数据时，打开「装入纸带」、运行一步，然后关闭装入再继续。'},
     {id:'oscillator',name:'时序振荡器 · 与非门＋延迟线',description:'按“下一步运行”让输出在0和1之间交替，也可以开启连续运行。'},
     {id:'counter4',name:'四位计数器 · 与非门＋延迟线',description:'22个与非门和4条延迟线组成计数器。开启计数时，每一步加1，从0数到15再回到0；关闭开关保持当前数字。'},
@@ -168,6 +169,7 @@
   function load(id){
     if(!list.some(p=>p.id===id))throw Error('没有这个默认存档');const definitions=library();
     if(id==='lambda')return lambdaExample(definitions);
+    if(id==='beta')return Beta.build(definitions);
     if(id==='turing8')return turingExample(definitions);
     if(!['calculator8','register8','ram256'].includes(id))return {...basic(id),definitions};
     if(id==='calculator8')addCalculator(definitions);else{addMux(definitions);addRegister(definitions);if(id==='ram256')addMemory(definitions);}

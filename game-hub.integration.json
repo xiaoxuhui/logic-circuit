@@ -13,6 +13,7 @@
     "src/expanded.js",
     "src/app.js",
     "src/presets.js",
+    "src/beta-preset.js",
     "src/minecraft-redstone.js",
     "src/minecraft-model.js",
     "src/minecraft-view.js",
